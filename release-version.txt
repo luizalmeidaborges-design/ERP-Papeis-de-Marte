@@ -1,2 +1,2 @@
-1.2.0
-# Reexecução após corrigir o teste no Windows
+1.2.1
+# Backup automático durante o uso e no fechamento

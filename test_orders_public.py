@@ -41,6 +41,7 @@ class PublicOrderTests(unittest.TestCase):
                     payment TEXT NOT NULL,production TEXT NOT NULL,notes TEXT NOT NULL)''')
                 db.execute("INSERT INTO orders VALUES (1,'PM0001','Cliente antigo','2026-09-01',"
                            "'2026-10-10','Pago','Entregue','Importado')")
+            db.close()
             store=Store(path)
             try:
                 store.db.execute("INSERT INTO order_items(order_id,description,qty,unit_cents) VALUES (1,'Item',1,4500)")

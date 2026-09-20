@@ -554,8 +554,11 @@ class Store:
         }
 
     def backup(self, destination):
-        with sqlite3.connect(destination) as other:
+        other=sqlite3.connect(destination)
+        try:
             self.db.backup(other)
+        finally:
+            other.close()
 
     def report_data(self, month=None, year=None):
         """Monthly sales use order creation dates; Total includes undated imports."""

@@ -57,8 +57,8 @@ o repositório.
 
 O repositório público inclui o código e o logo, mas exclui a planilha privada
 `assets/Precificação.xlsx`, bancos SQLite e arquivos temporários. O EXE publicado
-inicia com os dados já existentes no computador da cliente. Faça uma cópia de
-`marte.db` regularmente.
+inicia com os dados já existentes no computador da cliente. O banco é copiado
+automaticamente durante o uso e quando o programa é fechado.
 
 **Primeira entrega:** o EXE já enviado à cliente não conhece o atualizador.
 Envie uma única vez um novo EXE compilado com esta versão, depois de configurar
@@ -162,6 +162,30 @@ declarados no manifesto; controle o acesso de publicação desse repositório.
   a quantidade total do insumo.
 - **Início:** totais e pedidos em aberto por data de entrega.
 - **Salvar cópia dos dados:** crie regularmente um arquivo `.db` de backup.
+
+## Backup automático (a partir da versão 1.2.1)
+
+O programa mantém uma cópia diária do banco em
+`%LOCALAPPDATA%\ERP_Papeis_de_Marte\backups\marte_AAAA-MM-DD.db`.
+Cria a primeira cópia ao abrir, atualiza a cópia após mudanças (verificação a
+cada 30 segundos) e faz outra cópia ao clicar no **X**. No fechamento, aparece
+**Backup sendo realizado** e o programa aguarda a cópia local e a cópia para a
+pasta escolhida terminarem. Cópias dos dias anteriores continuam disponíveis;
+no mesmo dia, a cópia é atualizada com os pedidos e cadastros mais recentes.
+
+Clique no pequeno ícone **📁** ao lado da data no topo para escolher uma pasta
+de backup. Se escolher uma pasta sincronizada pelo OneDrive ou Google Drive, o
+aplicativo copia os arquivos para ela e o serviço sincroniza com a nuvem quando
+houver conexão. Confira o ícone do serviço para saber se o envio terminou: o
+aviso de backup do ERP confirma a cópia na pasta, não o envio à nuvem. Se essa
+pasta ficar indisponível, o backup local continua sendo salvo e aparece um
+aviso; ao voltar, o aplicativo tenta copiar novamente. O banco de trabalho
+`marte.db` permanece fora da pasta sincronizada.
+
+Para recuperar um backup, feche o ERP, guarde uma cópia do `marte.db` atual e
+copie o arquivo de backup escolhido para
+`%LOCALAPPDATA%\ERP_Papeis_de_Marte\marte.db`, substituindo o arquivo anterior.
+Ao abrir, o aplicativo carregará os dados daquela cópia.
 
 O banco fica em `%LOCALAPPDATA%\ERP_Papeis_de_Marte\marte.db` no Windows.
 Ao instalar uma nova versão do EXE, o aplicativo atualiza os campos necessários

@@ -4,13 +4,16 @@ from __future__ import annotations
 import sqlite3
 import math
 import calendar
+import os
 import queue
 import threading
+import time
 import tkinter as tk
 from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from automatic_backup import AutomaticBackup
 from core import (Store, asset, automatic_code, br_date, cents, data_directory,
                   export_order_pdf, export_report_pdf, filter_orders, fmt_qty, money, parse_date, quantity)
 from updater import check_and_stage, launch_cached, read_config
@@ -128,6 +131,14 @@ class ERP:
         self.style.configure('TEntry',padding=6)
         self.style.configure('TCombobox',padding=5)
         self.logo=tk.PhotoImage(file=str(asset('logo.png'))).subsample(2,2)
+        self.automatic_backup=AutomaticBackup(data_directory())
+        self.backup_status=tk.StringVar(value='Backup: aguardando')
+        self._backed_up_changes=-1
+        self._backed_up_day=None
+        self._cloud_retry_at=0
+        self._cloud_error=False
+        self._closing=False
+        self._close_results=queue.Queue()
         self.page='Papéis de Marte'
         self.calendar_month=date.today().replace(day=1)
         self.calendar_selected=date.today()
@@ -143,9 +154,103 @@ class ERP:
         self.update_config=read_config(asset('update_config.json'))
         if self.update_config.get('manifest_url'):
             root.after(1500,self.check_updates)
+        root.after(2500,self.check_automatic_backup)
 
     def close(self):
-        self.store.close();self.root.destroy()
+        if self._closing:return
+        self._closing=True
+        self.store.db.commit()
+        dialog=tk.Toplevel(self.root)
+        dialog.title('Cópia de segurança')
+        dialog.configure(bg=SURFACE)
+        dialog.resizable(False,False)
+        dialog.geometry('370x150')
+        dialog.transient(self.root)
+        dialog.protocol('WM_DELETE_WINDOW',lambda:None)
+        tk.Label(dialog,text='Backup sendo realizado',bg=SURFACE,fg=OLIVE,
+                 font=('Segoe UI',14,'bold')).pack(pady=(20,8))
+        tk.Label(dialog,text='Aguarde a cópia terminar antes de fechar.',bg=SURFACE,fg=MUTED,
+                 font=('Segoe UI',9)).pack()
+        progress=ttk.Progressbar(dialog,mode='indeterminate',length=290)
+        progress.pack(pady=(16,10));progress.start(12)
+        dialog.grab_set()
+        started=time.monotonic()
+        def worker():
+            try:self._close_results.put((self.automatic_backup.create(self.store.path),None))
+            except (OSError,ValueError,sqlite3.Error) as exc:self._close_results.put((None,str(exc)))
+        threading.Thread(target=worker,daemon=True).start()
+        def finish():
+            try:result,error=self._close_results.get_nowait()
+            except queue.Empty:
+                self.root.after(80,finish)
+                return
+            elapsed=time.monotonic()-started
+            if elapsed<0.8:
+                self.root.after(max(1,int((0.8-elapsed)*1000)),finish_result,result,error)
+            else:finish_result(result,error)
+        def finish_result(result,error):
+            progress.stop();dialog.destroy()
+            if error:
+                self._closing=False
+                if messagebox.askyesno('Falha no backup',
+                    f'Não foi possível gerar a cópia: {error}\n\nFechar mesmo assim?',parent=self.root):
+                    self.store.close();self.root.destroy()
+                return
+            if result.selected_error:
+                messagebox.showwarning('Cópia na pasta não concluída',
+                    'O backup local foi salvo, mas a pasta escolhida não recebeu a cópia. '
+                    f'Confira a sincronização e o espaço disponível.\n\nDetalhes: {result.selected_error}',parent=self.root)
+            self.store.close();self.root.destroy()
+        self.root.after(80,finish)
+
+    def check_automatic_backup(self):
+        if self._closing:return
+        changed=self._backed_up_changes!=self.store.db.total_changes
+        new_day=self._backed_up_day!=date.today()
+        retry=self._cloud_error and time.monotonic()-self._cloud_retry_at>300
+        if changed or new_day or retry:self.run_automatic_backup()
+        self.root.after(30000,self.check_automatic_backup)
+
+    def run_automatic_backup(self):
+        try:
+            result=self.automatic_backup.create(self.store.path)
+            self._backed_up_changes=self.store.db.total_changes
+            self._backed_up_day=date.today()
+            self._cloud_error=bool(result.selected_error)
+            self._cloud_retry_at=time.monotonic()
+            stamp=time.strftime('%d/%m %H:%M')
+            if result.selected_error:
+                self.backup_status.set(f'Backup local: {stamp} • revisar pasta')
+            elif result.selected_path:
+                self.backup_status.set(f'Cópia na pasta: {stamp}')
+            else:
+                self.backup_status.set(f'Backup local: {stamp}')
+            return result
+        except (OSError,ValueError,sqlite3.Error) as exc:
+            self.backup_status.set('Falha no backup • confira a pasta')
+            return None
+
+    def choose_backup_folder(self):
+        initial=self.automatic_backup.folder
+        if initial is None or not initial.is_dir():
+            initial=next((Path(value) for key in ('OneDriveCommercial','OneDrive','OneDriveConsumer')
+                          if (value:=os.environ.get(key)) and Path(value).is_dir()),Path.home())
+        folder=filedialog.askdirectory(parent=self.root,initialdir=str(initial),
+                                       title='Escolha a pasta para as cópias automáticas')
+        if not folder:return
+        try:self.automatic_backup.select_folder(folder)
+        except (OSError,ValueError) as exc:
+            messagebox.showerror('Pasta indisponível',str(exc),parent=self.root)
+            return
+        result=self.run_automatic_backup()
+        if result and result.selected_path:
+            messagebox.showinfo('Backup configurado',
+                f'Cópia salva em:\n{result.selected_path}\n\n'
+                'Se essa pasta estiver no OneDrive ou Google Drive, confira o ícone de sincronização para saber quando a cópia chegou à nuvem.',
+                parent=self.root)
+        else:
+            messagebox.showwarning('Confira a pasta',
+                'A cópia local foi mantida. Verifique se a pasta escolhida está disponível.',parent=self.root)
 
     def check_updates(self):
         def worker():
@@ -197,6 +302,11 @@ class ERP:
         tk.Label(head,text=self.page,bg=BG,fg=OLIVE,font=('Segoe UI',24,'bold')).pack(side='left')
         tk.Label(head,text=date.today().strftime('%d/%m/%Y'),bg=BG,fg=MUTED,
                  font=('Segoe UI',10)).pack(side='right')
+        tk.Button(head,text='📁',command=self.choose_backup_folder,
+                  bg=CREAM,fg=OLIVE,activebackground='#EBD6C1',relief='flat',bd=0,
+                  cursor='hand2',font=('Segoe UI',12),padx=7,pady=3).pack(side='right',padx=(0,12))
+        tk.Label(head,textvariable=self.backup_status,bg=BG,fg=MUTED,
+                 font=('Segoe UI',9)).pack(side='right',padx=(0,9))
         if self.page=='Papéis de Marte':self.home()
         elif self.page=='Insumos':self.material_page()
         elif self.page=='Produtos':self.product_page()

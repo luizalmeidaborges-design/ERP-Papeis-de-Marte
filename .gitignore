@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+build/
+dist/
+*.spec
+*.pyc
+*.db
+*.db-journal
+*.sqlite*
+assets/Precificação.xlsx

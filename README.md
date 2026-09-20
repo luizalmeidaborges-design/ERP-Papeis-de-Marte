@@ -126,13 +126,20 @@ declarados no manifesto; controle o acesso de publicação desse repositório.
 - **Pedidos:** cliente, entrega, vários itens, valor por item, status de pagamento,
   status de produção, observações e geração de comprovante em PDF. Produtos do
   cadastro aparecem como sugestões; também é possível digitar itens avulsos.
+  Clique no botão de calendário ao lado de **Entrega** para escolher a data.
+  Quando o pagamento for **Parcial**, informe quanto já foi recebido; o saldo
+  aparece no pedido e na coluna **Restante**. **Pago** encerra o saldo; **Pendente**
+  mostra o total em aberto. Pedidos anteriores preservam seus status.
   Selecione um pedido e use **Excluir pedido** para removê-lo após confirmação.
   O estoque consumido é devolvido às variações correspondentes, com estorno
   registrado no histórico. O número do pedido não é reutilizado.
   O botão **Salvar pedido** permanece visível no rodapé da edição; use a barra
   de rolagem para alcançar os demais campos em telas menores.
+- **Calendário:** veja as entregas do mês, mude de mês e clique em um dia para
+  listar seus pedidos. Um clique duplo na lista abre o pedido para edição.
 - **Filtros de pedidos:** filtros independentes por número, cliente, itens, data
-  de criação, data de entrega, pagamento, produção e faixa de valor. Datas são
+  de criação, data de entrega, pagamento, produção, faixa de valor e valor
+  restante. Datas são
   pesquisadas como aparecem na tabela (`DD/MM/AAAA`).
 - **Relatórios:** escolha mês/ano de cadastro ou Total para ver pedidos, receita,
   ticket médio, situação e itens vendidos. Exporte o resumo para PDF.

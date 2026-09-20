@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 import math
+import calendar
 import queue
 import threading
 import tkinter as tk
@@ -45,15 +46,67 @@ def button(parent,text,command,primary=True):
 def grid(parent, columns, widths):
     box=tk.Frame(parent,bg=SURFACE)
     box.pack(fill='both',expand=True,padx=26,pady=(12,23))
-    tree=ttk.Treeview(box,columns=columns,show='headings',selectmode='browse')
+    table=tk.Frame(box,bg=SURFACE)
+    table.pack(fill='both',expand=True)
+    tree=ttk.Treeview(table,columns=columns,show='headings',selectmode='browse')
     for column,width in zip(columns,widths):
         tree.heading(column,text=column)
         tree.column(column,width=width,minwidth=65,anchor='w',stretch=True)
-    scrollbar=ttk.Scrollbar(box,orient='vertical',command=tree.yview)
-    tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar=ttk.Scrollbar(table,orient='vertical',command=tree.yview)
+    horizontal=ttk.Scrollbar(box,orient='horizontal',command=tree.xview)
+    tree.configure(yscrollcommand=scrollbar.set,xscrollcommand=horizontal.set)
     tree.pack(side='left',fill='both',expand=True)
     scrollbar.pack(side='right',fill='y')
+    horizontal.pack(fill='x')
     return tree
+
+
+def pick_date(parent, entry):
+    """Choose a date without requiring internet access or another package."""
+    try:chosen=date.fromisoformat(parse_date(entry.get()))
+    except ValueError:chosen=date.today()
+    popup=tk.Toplevel(parent)
+    popup.title('Escolher data de entrega')
+    popup.configure(bg=SURFACE)
+    popup.resizable(False,False)
+    popup.transient(parent)
+    popup.update_idletasks()
+    x=min(entry.winfo_rootx(),popup.winfo_screenwidth()-325)
+    y=min(entry.winfo_rooty()+entry.winfo_height()+5,popup.winfo_screenheight()-320)
+    popup.geometry(f'305x290+{max(0,x)}+{max(0,y)}')
+    panel=tk.Frame(popup,bg=SURFACE)
+    panel.pack(fill='both',expand=True,padx=12,pady=12)
+    for column in range(7):panel.grid_columnconfigure(column,weight=1)
+    title=tk.Label(panel,bg=SURFACE,fg=OLIVE,font=('Segoe UI',12,'bold'))
+    title.grid(row=0,column=1,columnspan=5,pady=(1,11))
+    state=[chosen.year,chosen.month]
+    def draw():
+        title.config(text=f'{MONTHS[state[1]]} {state[0]}')
+        for child in panel.grid_slaves():
+            if int(child.grid_info()['row'])>=2:child.destroy()
+        for column,name in enumerate(('Seg','Ter','Qua','Qui','Sex','Sáb','Dom')):
+            tk.Label(panel,text=name,bg=SURFACE,fg=MUTED,font=('Segoe UI',9,'bold')).grid(row=2,column=column,pady=3)
+        for row,week in enumerate(calendar.monthcalendar(*state),start=3):
+            for column,day in enumerate(week):
+                if not day:continue
+                def select(value=day):
+                    entry.delete(0,tk.END)
+                    entry.insert(0,date(state[0],state[1],value).strftime('%d/%m/%Y'))
+                    popup.destroy()
+                tk.Button(panel,text=str(day),command=select,relief='flat',bd=0,cursor='hand2',
+                          bg=RED if (state[0],state[1],day)==(chosen.year,chosen.month,chosen.day) else BG,
+                          fg='white' if (state[0],state[1],day)==(chosen.year,chosen.month,chosen.day) else OLIVE,
+                          font=('Segoe UI',9),width=3,pady=3).grid(row=row,column=column,pady=1)
+    def move(delta):
+        month=state[0]*12+state[1]-1+delta
+        state[:]=[month//12,(month%12)+1]
+        draw()
+    button(panel,'‹',lambda:move(-1),False).grid(row=0,column=0)
+    button(panel,'›',lambda:move(1),False).grid(row=0,column=6)
+    draw()
+    popup.grab_set()
+    popup.wait_window()
+    if parent.winfo_exists():parent.grab_set()
 
 
 class ERP:
@@ -75,7 +128,9 @@ class ERP:
         self.style.configure('TEntry',padding=6)
         self.style.configure('TCombobox',padding=5)
         self.logo=tk.PhotoImage(file=str(asset('logo.png'))).subsample(2,2)
-        self.page='Início'
+        self.page='Papéis de Marte'
+        self.calendar_month=date.today().replace(day=1)
+        self.calendar_selected=date.today()
         self.order_filters={}
         self.report_month=date.today().month
         self.report_year=date.today().year
@@ -115,10 +170,10 @@ class ERP:
         tk.Label(side,image=self.logo,bg=OLIVE).pack(pady=(24,0))
         tk.Label(side,text='PAPÉIS DE MARTE',bg=OLIVE,fg='#FFF8F0',
                  font=('Segoe UI',14,'bold')).pack(pady=(3,2))
-        tk.Label(side,text='Ateliê • Gestão local',bg=OLIVE,fg='#E8CDA7',
+        tk.Label(side,text='Thayna Donadei',bg=OLIVE,fg='#E8CDA7',
                  font=('Segoe UI',9)).pack(pady=(0,32))
-        for name,icon in [('Início','⌂'),('Insumos','◈'),('Produtos','▦'),('Pedidos','▤'),
-                          ('Estoque','◉'),('Relatórios','▥')]:
+        for name,icon in [('Papéis de Marte','⌂'),('Insumos','◈'),('Produtos','▦'),('Pedidos','▤'),
+                          ('Calendário','▦'),('Estoque','◉'),('Relatórios','▥')]:
             tk.Button(side,text=f'  {icon}    {name}',anchor='w',command=lambda n=name:self.navigate(n),
                       bg=OLIVE,fg='white',activebackground='#686344',activeforeground='white',
                       relief='flat',bd=0,cursor='hand2',font=('Segoe UI',11),padx=22,pady=14).pack(fill='x',pady=2)
@@ -142,10 +197,11 @@ class ERP:
         tk.Label(head,text=self.page,bg=BG,fg=OLIVE,font=('Segoe UI',24,'bold')).pack(side='left')
         tk.Label(head,text=date.today().strftime('%d/%m/%Y'),bg=BG,fg=MUTED,
                  font=('Segoe UI',10)).pack(side='right')
-        if self.page=='Início':self.home()
+        if self.page=='Papéis de Marte':self.home()
         elif self.page=='Insumos':self.material_page()
         elif self.page=='Produtos':self.product_page()
         elif self.page=='Pedidos':self.order_page()
+        elif self.page=='Calendário':self.calendar_page()
         elif self.page=='Estoque':self.stock_page()
         else:self.report_page()
 
@@ -166,7 +222,7 @@ class ERP:
 
     def home(self):
         d=self.store.dashboard()
-        tk.Label(self.main,text='Seu ateliê em um só lugar.',bg=BG,fg=RED,
+        tk.Label(self.main,text='Sua Papelaria de Outro Planeta',bg=BG,fg=RED,
                  font=('Segoe UI',14)).pack(anchor='w',padx=26,pady=(0,18))
         cards=tk.Frame(self.main,bg=BG);cards.pack(fill='x',padx=22)
         for i,(label,value) in enumerate([
@@ -484,6 +540,68 @@ class ERP:
             except ValueError as exc:self.fail(exc,win)
         button(win,'Transferir',save).pack(side='right',padx=25,pady=13)
 
+    def calendar_page(self):
+        today=date.today()
+        month=self.calendar_month
+        by_day={}
+        for order in self.store.orders():
+            if order['due_date'] and order['due_date'].startswith(month.strftime('%Y-%m-')):
+                day=int(order['due_date'][8:])
+                by_day.setdefault(day,[]).append(order)
+        controls=tk.Frame(self.main,bg=BG)
+        controls.pack(fill='x',padx=26,pady=(0,10))
+        def move(delta):
+            index=month.year*12+month.month-1+delta
+            self.calendar_month=date(index//12,index%12+1,1)
+            self.calendar_selected=self.calendar_month
+            self.render()
+        button(controls,'‹ Mês anterior',lambda:move(-1),False).pack(side='left')
+        tk.Label(controls,text=f'{MONTHS[month.month]} de {month.year}',bg=BG,fg=OLIVE,
+                 font=('Segoe UI',16,'bold')).pack(side='left',padx=24)
+        button(controls,'Próximo mês ›',lambda:move(1),False).pack(side='left')
+        button(controls,'Hoje',lambda:self.calendar_today(),False).pack(side='right')
+        calendar_box=tk.Frame(self.main,bg=CREAM)
+        calendar_box.pack(fill='x',padx=26)
+        for column,title in enumerate(('Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo')):
+            calendar_box.grid_columnconfigure(column,weight=1,uniform='days')
+            tk.Label(calendar_box,text=title,bg=OLIVE,fg='white',font=('Segoe UI',9,'bold'),
+                     pady=5).grid(row=0,column=column,sticky='ew',padx=1,pady=1)
+        for row,week in enumerate(calendar.monthcalendar(month.year,month.month),start=1):
+            for column,day in enumerate(week):
+                events=by_day.get(day,[])
+                selected=(month.year,month.month,day)==(
+                    self.calendar_selected.year,self.calendar_selected.month,self.calendar_selected.day)
+                bg=CREAM if not day else ('#F2D2C0' if selected else SURFACE)
+                entries='\n'.join(f"{o['number']} · {o['customer'][:11]}" for o in events[:2])
+                if len(events)>2:entries+=f'\n+{len(events)-2} pedidos'
+                label=(str(day)+'\n'+entries) if day else ''
+                def choose(value=day):
+                    self.calendar_selected=date(month.year,month.month,value)
+                    self.render()
+                tk.Button(calendar_box,text=label,command=choose if day else None,state='normal' if day else 'disabled',
+                          anchor='nw',justify='left',wraplength=110,relief='flat',bd=0,cursor='hand2' if day else 'arrow',
+                          bg=bg,fg=RED if events else OLIVE,activebackground='#F2D2C0',
+                          font=('Segoe UI',9,'bold' if events else 'normal'),height=4,
+                          padx=7).grid(row=row,column=column,sticky='nsew',padx=1,pady=1)
+        selected=self.calendar_selected
+        tk.Label(self.main,text='Entregas em '+selected.strftime('%d/%m/%Y'),bg=BG,fg=OLIVE,
+                 font=('Segoe UI',12,'bold')).pack(anchor='w',padx=26,pady=(13,0))
+        self.calendar_tree=grid(self.main,('Pedido','Cliente','Pagamento','Produção','Total','Restante'),
+                                (105,230,115,145,110,110))
+        for o in by_day.get(selected.day,[]) if selected.year==month.year and selected.month==month.month else []:
+            self.calendar_tree.insert('',tk.END,iid=str(o['id']),values=(o['number'],o['customer'],
+               o['payment'],o['production'],money(o['total_cents']) if not o['unpriced'] else 'A definir',
+               money(o['remaining_cents'])))
+        def open_order(_=None):
+            if self.calendar_tree.selection():
+                self.order_dialog(self.store.order(int(self.calendar_tree.selection()[0])))
+        self.calendar_tree.bind('<Double-1>',open_order)
+
+    def calendar_today(self):
+        self.calendar_selected=date.today()
+        self.calendar_month=self.calendar_selected.replace(day=1)
+        self.render()
+
     def order_page(self):
         self.toolbar('Gerencie pedidos e comprovantes.',
                      [('Novo pedido',lambda:self.order_dialog(),True),('Editar',lambda:self.edit_order(),False),
@@ -493,7 +611,8 @@ class ERP:
         panel.pack(fill='x',padx=26,pady=(3,8))
         specs=[('number','Nº'),('customer','Cliente'),('items','Itens'),('created','Criado'),('due','Entrega'),
                ('payment','Pagamento'),('production','Produção'),('min_total','Total mínimo (R$)'),
-               ('max_total','Total máximo (R$)')]
+               ('max_total','Total máximo (R$)'),('min_remaining','Restante mínimo (R$)'),
+               ('max_remaining','Restante máximo (R$)')]
         orders=self.store.orders()
         for index,(key,title) in enumerate(specs):
             row,col=divmod(index,5)
@@ -510,11 +629,12 @@ class ERP:
             else:
                 input_widget=ttk.Entry(box,textvariable=self.order_filters[key],width=17)
             input_widget.pack(fill='x')
-        button(panel,'Limpar filtros',self.clear_order_filters,False).grid(row=1,column=4,sticky='e',padx=8,pady=5)
+        button(panel,'Limpar filtros',self.clear_order_filters,False).grid(row=2,column=4,sticky='e',padx=8,pady=5)
         self.filter_count=tk.Label(self.main,text='',bg=BG,fg=MUTED,font=('Segoe UI',9))
         self.filter_count.pack(anchor='w',padx=28)
-        self.tree=grid(self.main,('Nº','Cliente','Itens','Criado','Entrega','Pagamento','Produção','Total'),
-                       (90,145,245,92,100,105,115,95))
+        self.tree=grid(self.main,('Nº','Cliente','Itens','Criado','Entrega','Pagamento','Produção','Total','Restante'),
+                       (90,145,245,92,100,105,115,95,95))
+        for column in self.tree['columns']:self.tree.column(column,stretch=False)
         self.update_order_results()
         self.tree.bind('<Double-1>',lambda _:self.edit_order())
 
@@ -543,7 +663,7 @@ class ERP:
         if self.page!='Pedidos' or not hasattr(self,'tree') or not hasattr(self,'filter_count'):
             return
         try:
-            values={key:(cents(var.get(),allow_empty=True) if key in ('min_total','max_total')
+            values={key:(cents(var.get(),allow_empty=True) if key in ('min_total','max_total','min_remaining','max_remaining')
                          else '' if var.get()=='Todos' else var.get()) for key,var in self.order_filters.items()}
         except ValueError:
             self.filter_count.configure(text='Digite um valor válido nos filtros de total.')
@@ -553,7 +673,8 @@ class ERP:
         for o in orders:
             self.tree.insert('',tk.END,iid=str(o['id']),values=(o['number'],o['customer'],o['descriptions'],
                 br_date(o['created_date']),br_date(o['due_date']),o['payment'],o['production'],
-                money(o['total_cents']) if not o['unpriced'] else 'A definir'))
+                money(o['total_cents']) if not o['unpriced'] else 'A definir',
+                money(o['remaining_cents'])))
         self.filter_count.configure(text=f'{len(orders)} pedido(s) exibido(s)')
 
     def report_page(self):
@@ -709,13 +830,36 @@ class ERP:
         body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=15)
         for i in range(2):body.grid_columnconfigure(i,weight=1)
         customer=field(body,'CLIENTE',0,o['customer'] if o else '',0)
-        due=field(body,'ENTREGA • DD/MM/AAAA',0,br_date(o['due_date']) if o and o['due_date'] else '',1)
+        tk.Label(body,text='ENTREGA • DD/MM/AAAA',bg=SURFACE,fg=OLIVE,
+                 font=('Segoe UI',9,'bold')).grid(row=0,column=1,sticky='w',padx=10,pady=(12,3))
+        due_box=tk.Frame(body,bg=SURFACE)
+        due_box.grid(row=1,column=1,sticky='ew',padx=10,pady=(0,3))
+        due=ttk.Entry(due_box)
+        due.pack(side='left',fill='x',expand=True)
+        if o and o['due_date']:due.insert(0,br_date(o['due_date']))
+        button(due_box,'▦',lambda:pick_date(win,due),False).pack(side='left',padx=(5,0))
         tk.Label(body,text='PAGAMENTO',bg=SURFACE,fg=OLIVE,font=('Segoe UI',9,'bold')).grid(row=2,column=0,sticky='w',padx=10,pady=(12,3))
         payment=ttk.Combobox(body,values=['Pendente','Parcial','Pago','Presente'],state='readonly')
         payment.grid(row=3,column=0,sticky='ew',padx=10);payment.set(o['payment'] if o else 'Pendente')
         tk.Label(body,text='PRODUÇÃO',bg=SURFACE,fg=OLIVE,font=('Segoe UI',9,'bold')).grid(row=2,column=1,sticky='w',padx=10,pady=(12,3))
         production=ttk.Combobox(body,values=['Novo','Criando arte','Aguardando aprovação','Em produção','Pronto','Entregue'],state='normal')
         production.grid(row=3,column=1,sticky='ew',padx=10);production.set(o['production'] if o else 'Novo')
+        partial_title=tk.Label(body,text='VALOR RECEBIDO (R$)',bg=SURFACE,fg=OLIVE,font=('Segoe UI',9,'bold'))
+        partial_title.grid(row=4,column=0,sticky='w',padx=10,pady=(12,3))
+        paid_var=tk.StringVar(value=f'{o["paid_cents"]/100:.2f}'.replace('.',',') if o and o['payment']=='Parcial' else '')
+        paid_entry=ttk.Entry(body,textvariable=paid_var)
+        paid_entry.grid(row=5,column=0,sticky='ew',padx=10)
+        remaining_title=tk.Label(body,text='PAGAMENTO RESTANTE',bg=SURFACE,fg=OLIVE,font=('Segoe UI',9,'bold'))
+        remaining_title.grid(row=4,column=1,sticky='w',padx=10,pady=(12,3))
+        remaining_label=tk.Label(body,text='—',bg=SURFACE,fg=RED,font=('Segoe UI',11,'bold'))
+        remaining_label.grid(row=5,column=1,sticky='w',padx=10)
+        def toggle_partial(_=None):
+            if payment.get()=='Parcial':
+                for widget in (partial_title,paid_entry,remaining_title,remaining_label):widget.grid()
+                redraw()
+            else:
+                for widget in (partial_title,paid_entry,remaining_title,remaining_label):widget.grid_remove()
+        payment.bind('<<ComboboxSelected>>',toggle_partial)
         tk.Label(content,text='ITENS DO PEDIDO',bg=SURFACE,fg=OLIVE,font=('Segoe UI',10,'bold')).pack(anchor='w',padx=25,pady=(18,5))
         row=tk.Frame(content,bg=SURFACE);row.pack(fill='x',padx=20)
         products=[p for p in self.store.products() if p['active']]
@@ -764,7 +908,15 @@ class ERP:
                 tree.insert('',tk.END,iid=str(i),values=(item['description'],variation_text,
                     fmt_qty(item['qty']),money(item['unit_cents']),money(part)))
             total.configure(text='TOTAL: '+('A definir' if unknown else money(sum_cents)))
+            if payment.get()=='Parcial':
+                try:
+                    received=cents(paid_var.get())
+                    remaining_label.config(text=money(max(0,sum_cents-received)) if not unknown else 'A definir')
+                except ValueError:
+                    remaining_label.config(text='Informe o valor recebido')
+        paid_var.trace_add('write',lambda *_:redraw())
         redraw()
+        toggle_partial()
         actions=tk.Frame(content,bg=SURFACE);actions.pack(fill='x',padx=22,pady=5)
         def add():
             nonlocal selected_variants
@@ -810,7 +962,8 @@ class ERP:
             try:
                 id=self.store.save_order(id=o['id'] if o else None,customer=customer.get(),
                   due_date=parse_date(due.get()),payment=payment.get(),production=production.get().strip() or 'Novo',
-                  notes=notes.get('1.0',tk.END),items=items)
+                  notes=notes.get('1.0',tk.END),items=items,
+                  paid_cents=cents(paid_var.get()) if payment.get()=='Parcial' else 0)
                 win.destroy();self.render()
                 if not o:messagebox.showinfo('Pedido salvo',f'Pedido {self.store.order(id)["number"]} registrado.',parent=self.root)
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)

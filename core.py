@@ -102,6 +102,11 @@ def filter_orders(orders, filters):
             continue
         if filters.get('max_total') is not None and (total is None or total > filters['max_total']):
             continue
+        remaining=order['remaining_cents']
+        if filters.get('min_remaining') is not None and (remaining is None or remaining < filters['min_remaining']):
+            continue
+        if filters.get('max_remaining') is not None and (remaining is None or remaining > filters['max_remaining']):
+            continue
         filtered.append(order)
     return filtered
 
@@ -140,7 +145,8 @@ class Store:
           CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY, number TEXT NOT NULL UNIQUE COLLATE NOCASE,
             customer TEXT NOT NULL, created_date TEXT, due_date TEXT,
-            payment TEXT NOT NULL DEFAULT 'Pendente', production TEXT NOT NULL DEFAULT 'Novo',
+            payment TEXT NOT NULL DEFAULT 'Pendente', paid_cents INTEGER NOT NULL DEFAULT 0,
+            production TEXT NOT NULL DEFAULT 'Novo',
             notes TEXT NOT NULL DEFAULT ''
           );
           CREATE TABLE IF NOT EXISTS order_sequence (
@@ -175,6 +181,9 @@ class Store:
     def migrate_schema(self):
         """Add fields without resetting a database already in use."""
         with self.db:
+            order_columns={r['name'] for r in self.all('PRAGMA table_info(orders)')}
+            if 'paid_cents' not in order_columns:
+                self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
             product_columns={r['name'] for r in self.all('PRAGMA table_info(products)')}
             for name in ('size','grammage'):
@@ -330,6 +339,9 @@ class Store:
 
     def orders(self):
         return self.all("""SELECT o.*, SUM(CASE WHEN i.unit_cents IS NOT NULL THEN ROUND(i.qty*i.unit_cents) ELSE 0 END) AS total_cents,
+          CASE WHEN SUM(CASE WHEN i.unit_cents IS NULL THEN 1 ELSE 0 END)>0 THEN NULL
+               WHEN o.payment IN ('Pago','Presente') THEN 0
+               ELSE CAST(MAX(0,SUM(ROUND(i.qty*i.unit_cents))-o.paid_cents) AS INTEGER) END AS remaining_cents,
           SUM(CASE WHEN i.unit_cents IS NULL THEN 1 ELSE 0 END) AS unpriced,
           GROUP_CONCAT(i.description || COALESCE((SELECT ' [' || GROUP_CONCAT(m.name||': '||v.name, ', ') || ']'
             FROM order_item_variants iv JOIN materials m ON m.id=iv.material_id
@@ -366,7 +378,7 @@ class Store:
             self.db.execute('DELETE FROM order_items WHERE order_id=?',(id,))
             self.db.execute('DELETE FROM orders WHERE id=?',(id,))
 
-    def save_order(self, *, id=None, customer, due_date, payment, production, notes, items):
+    def save_order(self, *, id=None, customer, due_date, payment, production, notes, items, paid_cents=0):
         customer = customer.strip()
         if not customer or not items or not due_date:
             raise ValueError("Preencha cliente, entrega e ao menos um item.")
@@ -374,6 +386,18 @@ class Store:
         for item in items:
             if not item['description'].strip() or item['qty'] <= 0 or item['unit_cents'] is None or item['unit_cents'] < 0:
                 raise ValueError("Cada item precisa de descrição, quantidade e preço.")
+        if payment not in ('Pendente','Parcial','Pago','Presente'):
+            raise ValueError('Selecione uma situação de pagamento válida.')
+        if not isinstance(paid_cents,int) or paid_cents<0:
+            raise ValueError('O valor recebido precisa ser válido e positivo.')
+        total_cents=sum(round(item['qty']*item['unit_cents']) for item in items)
+        if payment=='Parcial':
+            if not 0<paid_cents<total_cents:
+                raise ValueError('No pagamento parcial, o valor recebido deve ser maior que zero e menor que o total.')
+        elif payment=='Pago':
+            paid_cents=total_cents
+        else:
+            paid_cents=0
         old_items=list(self.items(id)) if id else []
         def signature(rows):
             return Counter((r['product_id'],round(float(r['qty']),8),
@@ -407,13 +431,13 @@ class Store:
                     usage[(material_id,variant_id)]+=item['qty']*r['qty']
         with self.db:
             if id:
-                self.db.execute("UPDATE orders SET customer=?,due_date=?,payment=?,production=?,notes=? WHERE id=?",
-                                (customer,due_date,payment,production,notes.strip(),id))
+                self.db.execute("UPDATE orders SET customer=?,due_date=?,payment=?,paid_cents=?,production=?,notes=? WHERE id=?",
+                                (customer,due_date,payment,paid_cents,production,notes.strip(),id))
                 self.db.execute("DELETE FROM order_items WHERE order_id=?", (id,))
             else:
                 number=self.next_number()
-                id = self.db.execute("INSERT INTO orders(number,customer,created_date,due_date,payment,production,notes) VALUES(?,?,?,?,?,?,?)",
-                                     (number,customer,date.today().isoformat(),due_date,payment,production,notes.strip())).lastrowid
+                id = self.db.execute("INSERT INTO orders(number,customer,created_date,due_date,payment,paid_cents,production,notes) VALUES(?,?,?,?,?,?,?,?)",
+                                     (number,customer,date.today().isoformat(),due_date,payment,paid_cents,production,notes.strip())).lastrowid
                 self._remember_number(number)
             for item in items:
                 item_id=self.db.execute("INSERT INTO order_items(order_id,product_id,description,qty,unit_cents) VALUES(?,?,?,?,?)",
@@ -687,6 +711,13 @@ def export_order_pdf(store: Store, order_id: int, destination: str | Path):
     cv.setFont(bold,13);cv.setFillColor(red)
     cv.drawRightString(width-48,y-10,'TOTAL: ' + (money(total) if not unknown else 'A definir'))
     y-=41
+    if order['payment']=='Parcial' and not unknown:
+        cv.setFont(font,10);cv.setFillColor(olive)
+        cv.drawRightString(width-48,y,'RECEBIDO: '+money(order['paid_cents']))
+        y-=18
+        cv.setFont(bold,10);cv.setFillColor(red)
+        cv.drawRightString(width-48,y,'RESTANTE: '+money(max(0,total-order['paid_cents'])))
+        y-=28
     if order['notes']:
         cv.setFillColor(olive);cv.setFont(bold,10);cv.drawString(38,y,'OBSERVAÇÕES');y-=17
         cv.setFont(font,9)

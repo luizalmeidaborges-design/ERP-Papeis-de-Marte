@@ -35,6 +35,12 @@ e envie uma vez à cliente. Para atualizações seguintes, repita a ação com
 uma conta no GitHub nem instalar o GitHub CLI. O botão de publicação aparece
 depois que `.github/workflows/publicar.yml` estiver no ramo padrão.
 
+Também é possível publicar ao alterar `release-version.txt` no ramo `main`:
+primeiro envie as mudanças do programa e depois atualize esse arquivo para a
+próxima versão (por exemplo, `1.3.0`). O GitHub inicia a compilação automaticamente.
+Mantenha apenas uma versão nova por publicação; a Release recebe o EXE e
+`update.json`. O comando manual continua disponível na aba Actions.
+
 Para criar o repositório `luizalmeidaborges-design/ERP-Papeis-de-Marte`
 diretamente do seu Windows, instale [Git for Windows](https://git-scm.com/download/win)
 e [GitHub CLI](https://cli.github.com/), execute `gh auth login` no terminal uma

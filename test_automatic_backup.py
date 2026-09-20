@@ -2,6 +2,7 @@
 from contextlib import closing
 from datetime import date
 from pathlib import Path
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -25,7 +26,12 @@ class AutomaticBackupTests(unittest.TestCase):
                 selected = directory / 'OneDrive' / 'Papéis de Marte'
                 selected.mkdir(parents=True)
                 backup.select_folder(selected)
-                self.assertEqual(AutomaticBackup(directory / 'data').folder, selected)
+                self.assertTrue(
+                    os.path.samefile(
+                        AutomaticBackup(directory / 'data').folder,
+                        selected,
+                    )
+                )
                 item = {'product_id': None, 'description': 'Caderno',
                         'qty': 1, 'unit_cents': 2000}
                 store.save_order(customer='Primeira', due_date='2026-10-01',

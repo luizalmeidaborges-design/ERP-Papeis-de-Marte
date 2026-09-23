@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox
 from datetime import date
 from core import cents, quantity, money, fmt_qty, br_date
 
-BG='#FFF8F0';SURFACE='#FFFFFF';OLIVE='#48452C';RED='#A7463E'
+from visual_theme import BG,SURFACE,OLIVE,RED
 
 
 class PurchaseUI:

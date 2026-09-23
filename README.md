@@ -279,3 +279,18 @@ Para compilar: baixe a branch main e execute `compilar_windows.bat`. A configura
 do atualizador já está preparada com a versão 2.1.0 e o endereço deste repositório.
 Não é necessário alterar release-version.txt para compilar localmente; alterá-lo
 aciona o GitHub Actions. Esta entrega não publica uma Release automaticamente.
+
+## Build 2.1.1 — janela e identidade visual
+
+O ERP abre maximizado, mantendo os controles de fechar e a barra do Windows.
+F11 alterna tela cheia e Esc sai dela. Em telas menores, barras de rolagem
+mantêm o menu e a área de trabalho acessíveis; o rodapé do produto tem espaço
+reservado para salvar. Janelas de cadastro respeitam o tamanho da tela.
+
+O tema usa bordô #7A2E3A, verde botânico #55613F, dourado #C79A5A,
+pergaminho #F6F1E8, bege #D8B08C e marrom #3A2417. Títulos usam
+Cormorant Garamond/Garamond quando instaladas, com alternativa Georgia;
+textos usam Libre Franklin/Montserrat, com alternativa Segoe UI. Nenhuma
+fonte precisa ser baixada para usar o ERP offline.
+
+Compile com compilar_windows.bat. A versão do atualizador está em 2.1.1.

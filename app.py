@@ -143,6 +143,7 @@ class ERP:
         self.calendar_month=date.today().replace(day=1)
         self.calendar_selected=date.today()
         self.order_filters={}
+        self.material_filters={}
         self.report_month=date.today().month
         self.report_year=date.today().year
         self._navigating=False
@@ -370,17 +371,38 @@ class ERP:
                      [('Novo insumo',lambda:self.material_dialog(),True),
                       ('Editar',lambda:self.edit_material(),False),
                       ('Ativar / inativar',lambda:self.toggle_material(),False)])
-        self.filter_bar()
-        self.tree=grid(self.main,('Código','Insumo','Tamanho','Gramatura','Variações','Embalagem','Preço','Custo/un.','Estado'),
-                       (110,155,75,75,165,100,95,100,70))
-        term=self.search.get().casefold()
-        for m in self.store.materials():
-            if term not in (m['code']+' '+m['name']+' '+m['size']+' '+m['grammage']+' '+m['specification']).casefold():continue
-            unit_cost=m['pack_cents']/m['pack_qty']
-            names=', '.join(v['name'] for v in self.store.variants(m['id'],active_only=True))
-            self.tree.insert('',tk.END,iid=str(m['id']),values=(m['code'],m['name'],m['size'],m['grammage'],names,
-                 fmt_qty(m['pack_qty'])+' '+m['unit'],money(m['pack_cents']),
-                 f'R$ {unit_cost/100:.4f}'.replace('.',','),'Ativo' if m['active'] else 'Inativo'))
+        filters=tk.Frame(self.main,bg=BG);filters.pack(fill='x',padx=26,pady=5)
+        variables={}
+        for i,(key,label) in enumerate((('name','Nome / código'),('size','Tamanho'),
+                                       ('grammage','Gramatura'),('variant','Variação'),('state','Estado'))):
+            filters.grid_columnconfigure(i,weight=1)
+            tk.Label(filters,text=label,bg=BG,fg=MUTED).grid(row=0,column=i,sticky='w',padx=3)
+            var=tk.StringVar(value=self.material_filters.get(key,''));variables[key]=var
+            entry=(ttk.Combobox(filters,textvariable=var,values=('','Ativo','Inativo'),state='readonly',width=10)
+                   if key=='state' else ttk.Entry(filters,textvariable=var,width=14))
+            entry.grid(row=1,column=i,sticky='ew',padx=3)
+        self.tree=grid(self.main,('Código','Insumo','Tamanho','Gramatura','Variações','Embalagem','Preço','Custo/un.','Estado','Data do preço'),
+                       (110,155,75,75,165,100,95,100,70,110))
+        def populate(*_):
+            self.material_filters={key:var.get() for key,var in variables.items()}
+            self.tree.delete(*self.tree.get_children())
+            for m in self.store.materials():
+                names=', '.join(v['name'] for v in self.store.variants(m['id'],active_only=True))
+                state='Ativo' if m['active'] else 'Inativo'
+                values={'name':m['code']+' '+m['name'],'size':m['size'],
+                        'grammage':m['grammage'],'variant':names,'state':state}
+                if any(value.strip().casefold() not in values[key].casefold()
+                       for key,value in self.material_filters.items() if key!='state'):continue
+                if self.material_filters['state'] and self.material_filters['state']!=state:continue
+                unit_cost=m['pack_cents']/m['pack_qty']
+                self.tree.insert('',tk.END,iid=str(m['id']),values=(m['code'],m['name'],m['size'],m['grammage'],names,
+                    fmt_qty(m['pack_qty'])+' '+m['unit'],money(m['pack_cents']),
+                    f'R$ {unit_cost/100:.4f}'.replace('.',','),state,br_date(m['price_date'])))
+        def clear():
+            for var in variables.values():var.set('')
+        button(filters,'Limpar',clear,False).grid(row=1,column=5,padx=5)
+        for var in variables.values():var.trace_add('write',populate)
+        populate()
         self.tree.bind('<Double-1>',lambda _:self.edit_material())
 
     def edit_material(self):
@@ -400,11 +422,16 @@ class ERP:
 
     def fail(self,exc,win):
         text=str(exc)
-        if isinstance(exc,sqlite3.IntegrityError):text='Código já cadastrado. Ajuste nome, tamanho ou gramatura para gerar outro código.'
+        if isinstance(exc,sqlite3.IntegrityError):text='Código já cadastrado. Nos produtos, informe outro código; nos insumos, revise nome, tamanho e gramatura.'
         messagebox.showerror('Não foi possível salvar',text,parent=win)
 
-    def material_dialog(self,m=None):
+    def material_dialog(self,m=None,parent=None,on_saved=None):
         win=self.modal('Editar insumo' if m else 'Novo insumo',700,610)
+        if parent:
+            win.transient(parent)
+            def restore_grab(event):
+                if event.widget is win and parent.winfo_exists():parent.grab_set()
+            win.bind('<Destroy>',restore_grab)
         frame=tk.Frame(win,bg=SURFACE);frame.pack(fill='x',padx=16)
         frame.grid_columnconfigure(0,weight=1);frame.grid_columnconfigure(1,weight=1)
         name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
@@ -418,6 +445,8 @@ class ERP:
         code=field(frame,'CÓDIGO GERADO',6,m['code'] if m else '',1)
         variant_names=', '.join(v['name'] for v in self.store.variants(m['id'],active_only=True)) if m else ''
         variants=field(frame,'VARIAÇÕES POSSÍVEIS (SEPARADAS POR VÍRGULA)',8,variant_names,0,width=48)
+        price_date=field(frame,'DATA DO PREÇO • DD/MM/AAAA',8,
+                         br_date(m['price_date']) if m and m['price_date'] else ('' if m else date.today().strftime('%d/%m/%Y')),1)
         code.configure(state='readonly')
         def update_code(*_):
             if m:return
@@ -432,11 +461,16 @@ class ERP:
                  bg=SURFACE,fg=MUTED,font=('Segoe UI',9)).pack(anchor='w',padx=26,pady=(3,0))
         def save():
             try:
-                self.store.save_material(id=m['id'] if m else None,code=m['code'] if m else None,name=name.get(),
+                entered_date=price_date.get().strip()
+                try:reference=parse_date(entered_date) if entered_date else ''
+                except ValueError:raise ValueError('Informe a data do preço em DD/MM/AAAA.')
+                saved_id=self.store.save_material(id=m['id'] if m else None,code=m['code'] if m else None,name=name.get(),
                   size=size.get(),grammage=gram.get(),specification=spec.get(),unit=unit.get(),
                   pack_qty=quantity(qty.get()),pack_cents=cents(price.get()),
-                  variants=variants.get().split(','))
-                win.destroy();self.render()
+                  variants=variants.get().split(','),price_date=reference)
+                win.destroy()
+                if on_saved:on_saved(saved_id)
+                else:self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(win,'Salvar insumo',save).pack(side='right',padx=26,pady=25)
 
@@ -474,26 +508,33 @@ class ERP:
         for i in range(2):body.grid_columnconfigure(i,weight=1)
         name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
         name=field(body,'NOME DO PRODUTO',0,p['name'] if p else '',0,variable=name_var)
-        code=field(body,'CÓDIGO GERADO',0,p['code'] if p else '',1)
-        code.configure(state='readonly')
+        code=field(body,'CÓDIGO DO PRODUTO',0,p['code'] if p else '',1)
         size=field(body,'TAMANHO',2,p['size'] if p else '',0,variable=size_var)
         gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var)
         markup=field(body,'MULTIPLICADOR SOBRE O CUSTO',4,str(p['markup']).replace('.',',') if p else '1,8',0)
         table=field(body,'PREÇO DE TABELA (R$) • OPCIONAL',4,f"{p['table_cents']/100:.2f}".replace('.',',') if p and p['table_cents'] is not None else '',1)
-        def update_code(*_):
-            if p:return
-            try:computed=automatic_code(name_var.get(),size_var.get(),gram_var.get())
-            except ValueError:computed=''
-            code.configure(state='normal');code.delete(0,tk.END);code.insert(0,computed);code.configure(state='readonly')
-        for variable in (name_var,size_var,gram_var):variable.trace_add('write',update_code)
-        update_code()
         tk.Label(win,text='COMPOSIÇÃO • quantidade usada para produzir uma unidade',bg=SURFACE,fg=OLIVE,
                  font=('Segoe UI',10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
         chooser=tk.Frame(win,bg=SURFACE);chooser.pack(fill='x',padx=20,pady=4)
         materials=[m for m in self.store.materials() if m['active']]
         mapping={f"{m['code']}  ·  {m['name']} ({m['size']} {m['grammage']})":m['code'] for m in materials}
-        combo=ttk.Combobox(chooser,values=list(mapping),state='readonly',width=51)
+        combo=ttk.Combobox(chooser,values=list(mapping),state='normal',width=38)
         combo.pack(side='left',padx=5,fill='x',expand=True)
+        def search_materials(event=None):
+            term=combo.get().strip().casefold()
+            combo.configure(values=[label for label in mapping if term in label.casefold()])
+        combo.bind('<KeyRelease>',search_materials)
+        def refresh_materials(saved_id):
+            mapping.clear()
+            for material in self.store.materials():
+                if not material['active']:continue
+                label=f"{material['code']}  ·  {material['name']} ({material['size']} {material['grammage']})"
+                mapping[label]=material['code']
+                if material['id']==saved_id:combo.set(label)
+            combo.configure(values=list(mapping))
+            win.grab_set()
+        button(chooser,'Novo insumo',lambda:self.material_dialog(parent=win,on_saved=refresh_materials),False).pack(side='left',padx=3)
+
         unit_qty=ttk.Entry(chooser,width=12);unit_qty.insert(0,'1');unit_qty.pack(side='left',padx=5)
         entries=[]
         table_frame=tk.Frame(win,bg=SURFACE);table_frame.pack(fill='both',expand=True,padx=20,pady=5)
@@ -518,7 +559,7 @@ class ERP:
                 f'Custo: {money(round(running))}    •    Sugerido: {money(round(running*factor))}')
         def add():
             try:
-                if not combo.get():raise ValueError('Escolha um insumo.')
+                if combo.get() not in mapping:raise ValueError('Digite para buscar e selecione um insumo na lista.')
                 entries.append((mapping[combo.get()],quantity(unit_qty.get())))
                 redraw()
             except (ValueError,KeyError) as exc:self.fail(exc,win)
@@ -533,7 +574,7 @@ class ERP:
         def save():
             try:
                 factor=float(markup.get().strip().replace(',','.'))
-                self.store.save_product(id=p['id'] if p else None,code=p['code'] if p else None,name=name.get(),
+                self.store.save_product(id=p['id'] if p else None,code=code.get(),name=name.get(),
                     size=size.get(),grammage=gram.get(),markup=factor,
                     table_cents=cents(table.get(),allow_empty=True),recipe=entries)
                 win.destroy();self.render()

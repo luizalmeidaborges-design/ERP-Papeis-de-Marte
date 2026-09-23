@@ -116,9 +116,10 @@ declarados no manifesto; controle o acesso de publicação desse repositório.
   O custo unitário é calculado como preço ÷ quantidade. Para comprimento ou massa,
   use a unidade adequada e mantenha a quantidade da receita na mesma unidade.
 - **Tamanho e gramatura:** aparecem em colunas separadas nos insumos e nos
-  produtos. Um novo código é gerado automaticamente com três caracteres do nome,
+  produtos. Nos insumos, um novo código é gerado automaticamente com três caracteres do nome,
   tamanho e gramatura. Exemplo: Offset + A4 + 150 = `OFFA4150`. Os códigos dos
-  registros anteriores são preservados na atualização.
+  registros anteriores são preservados na atualização. Nos produtos, o código é
+  preenchido manualmente e precisa ser único; também pode ser editado.
 - **Variações de insumos:** no cadastro, liste cores como `Branco, Dourado, Preto`.
   O preço e o custo unitário continuam sendo do insumo, iguais para todas as
   cores. Ao selecionar no pedido um produto que usa esse insumo, escolha a cor
@@ -230,3 +231,19 @@ ajuste. Pedidos já registrados preservam a cor escolhida.
 O comprovante em PDF é um resumo do pedido e não é nota fiscal. Os dados ficam
 apenas no computador; para transferi-los, copie ou restaure `marte.db` com o
 aplicativo fechado.
+
+## Melhorias de cadastro
+
+- Insumos: filtros combináveis por nome/código, tamanho, gramatura, variação e
+  estado, com botão Limpar. O campo Data do preço (DD/MM/AAAA) é editável e
+  aparece na listagem. Cadastros antigos ficam com data não informada até edição.
+  Em cadastros novos, a data sugerida é hoje; atualize-a ao revisar o preço.
+- Produtos: código manual obrigatório e único. Na composição, digite parte do
+  nome ou código do insumo e abra a lista para selecionar o resultado.
+- Novo insumo na composição: abre o cadastro sem perder o produto em edição;
+  ao salvar, o insumo fica selecionado. Informe a quantidade e clique Adicionar.
+
+Estas alterações de código não acionam a compilação automaticamente. Para
+compilar no computador, baixe o código atualizado e execute
+`compilar_windows.bat`. Para publicar uma atualização, configure antes uma
+versão superior à última Release com `configurar_release.py`.

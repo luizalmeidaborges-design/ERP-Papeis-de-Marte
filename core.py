@@ -186,6 +186,8 @@ class Store:
                 self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
             product_columns={r['name'] for r in self.all('PRAGMA table_info(products)')}
+            if 'price_date' not in material_columns:
+                self.db.execute("ALTER TABLE materials ADD COLUMN price_date TEXT NOT NULL DEFAULT ''")
             for name in ('size','grammage'):
                 if name not in material_columns:
                     self.db.execute(f"ALTER TABLE materials ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
@@ -238,13 +240,16 @@ class Store:
             if row:labels.append(f"{row['material']}: {row['variant']}")
         return labels
 
-    def save_material(self, *, id=None, name, size='', grammage='', specification='', pack_qty, unit, pack_cents, code=None, variants=None):
+    def save_material(self, *, id=None, name, size='', grammage='', specification='', pack_qty, unit, pack_cents, code=None, variants=None, price_date=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name:
             raise ValueError("Preencha o código e o nome do insumo.")
         if pack_qty <= 0 or pack_cents < 0:
             raise ValueError("Quantidade e preço da embalagem inválidos.")
+        if price_date:
+            try:date.fromisoformat(price_date)
+            except ValueError:raise ValueError('Informe uma data válida para o preço.')
         if variants is not None:
             cleaned=[v.strip() for v in variants if v.strip()]
             if len({v.casefold() for v in cleaned}) != len(cleaned):
@@ -262,6 +267,8 @@ class Store:
             else:
                 id=self.db.execute("INSERT INTO materials(code,name,size,grammage,specification,pack_qty,unit,pack_cents) VALUES(?,?,?,?,?,?,?,?)",
                                    (code,name,size,grammage,specification.strip(),pack_qty,unit.strip() or 'un',pack_cents)).lastrowid
+            if price_date is not None:
+                self.db.execute('UPDATE materials SET price_date=? WHERE id=?',(price_date,id))
             if variants is not None:
                 names={v.casefold() for v in cleaned}
                 for previous in self.variants(id):
@@ -270,6 +277,8 @@ class Store:
                 for value in cleaned:
                     self.db.execute('''INSERT INTO material_variants(material_id,name,active) VALUES(?,?,1)
                                        ON CONFLICT(material_id,name) DO UPDATE SET active=1''',(id,value))
+
+        return id
 
     def toggle_material(self, id):
         with self.db:

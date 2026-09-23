@@ -111,7 +111,10 @@ def filter_orders(orders, filters):
     return filtered
 
 
-class Store:
+from purchasing import Purchasing
+
+
+class Store(Purchasing):
     def __init__(self, path: str | Path, initial_workbook: str | Path | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +178,7 @@ class Store:
           CREATE INDEX IF NOT EXISTS stock_order_id ON stock_movements(order_id);
         """)
         self.migrate_schema()
+        self.init_purchases()
         if initial_workbook is not None and not self.db.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
             self.import_workbook(initial_workbook)
 
@@ -600,7 +604,7 @@ class Store:
                 'unknown':len(orders)-len(priced),'revenue':revenue,
                 'average_ticket':round(revenue/len(priced)) if priced else None,
                 'payment':counts('payment'),'production':counts('production'),'products':products,
-                'month':month,'year':year}
+                'month':month,'year':year,'financial':self.financial_summary(month,year)}
 
     def import_workbook(self, path):
         """Import once, preserving unresolved recipe codes and historical orders."""
@@ -820,6 +824,17 @@ def export_report_pdf(data: dict, destination: str | Path):
                                 for row in records],widths))
         else:
             story.append(Paragraph('Nenhum registro neste período.',subtle_style))
+
+    financial=data.get('financial')
+    if financial:
+        section('Vendas e compras por mês',['Mês','Vendas','Compras pagas','Saldo comercial'],
+                [(r['period'],money(r['sales']),money(r['spent']),money(r['balance'])) for r in financial['rows']],
+                [100,(available-100)/3,(available-100)/3,(available-100)/3])
+        story.append(Paragraph('Totais: vendas '+money(financial['sales'])+'; compras '+money(financial['spent'])+
+                               '; saldo '+money(financial['balance'])+'.',subtle_style))
+        story.append(Paragraph('Estoque parado atual (saldo positivo ao custo cadastrado): '+money(financial['stock_value']),subtle_style))
+        story.append(Paragraph('Vendas pela data de cadastro, excluindo presentes e valores indefinidos. Compras pela data do registro. '
+                               'Saldo comercial não é lucro líquido nem fluxo de caixa. Estoque é atual, mesmo ao filtrar meses anteriores.',subtle_style))
 
     section('Situação dos pedidos',['Pagamento','Pedidos'],data['payment'],[available-100,100])
     section('Etapas da produção',['Situação','Pedidos'],data['production'],[available-100,100])

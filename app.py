@@ -112,7 +112,10 @@ def pick_date(parent, entry):
     if parent.winfo_exists():parent.grab_set()
 
 
-class ERP:
+from purchase_ui import PurchaseUI
+
+
+class ERP(PurchaseUI):
     def __init__(self,root):
         self.root=root
         workbook=asset('Precificação.xlsx')
@@ -277,12 +280,12 @@ class ERP:
         tk.Label(side,text='PAPÉIS DE MARTE',bg=OLIVE,fg='#FFF8F0',
                  font=('Segoe UI',14,'bold')).pack(pady=(3,2))
         tk.Label(side,text='Thayna Donadei',bg=OLIVE,fg='#E8CDA7',
-                 font=('Segoe UI',9)).pack(pady=(0,32))
+                 font=('Segoe UI',9)).pack(pady=(0,16))
         for name,icon in [('Papéis de Marte','⌂'),('Insumos','◈'),('Produtos','▦'),('Pedidos','▤'),
-                          ('Calendário','▦'),('Estoque','◉'),('Relatórios','▥')]:
+                          ('Calendário','▦'),('Estoque','◉'),('Compras','▤'),('Relatórios','▥')]:
             tk.Button(side,text=f'  {icon}    {name}',anchor='w',command=lambda n=name:self.navigate(n),
                       bg=OLIVE,fg='white',activebackground='#686344',activeforeground='white',
-                      relief='flat',bd=0,cursor='hand2',font=('Segoe UI',11),padx=22,pady=14).pack(fill='x',pady=2)
+                      relief='flat',bd=0,cursor='hand2',font=('Segoe UI',11),padx=22,pady=10).pack(fill='x',pady=2)
         tk.Frame(side,bg=OLIVE).pack(fill='both',expand=True)
         self.update_status=tk.Label(side,text='',bg=OLIVE,fg='#F1D7AA',wraplength=190,
                                     justify='left',font=('Segoe UI',9))
@@ -314,6 +317,7 @@ class ERP:
         elif self.page=='Pedidos':self.order_page()
         elif self.page=='Calendário':self.calendar_page()
         elif self.page=='Estoque':self.stock_page()
+        elif self.page=='Compras':self.purchase_page()
         else:self.report_page()
 
     def toolbar(self,description,actions):
@@ -624,7 +628,7 @@ class ERP:
         self.stock_history_tree.delete(*self.stock_history_tree.get_children())
         names={'entry':'Entrada','manual_out':'Retirada forçada','adjustment':'Ajuste de saldo',
                'order_out':'Retirada por pedido','order_reversal':'Estorno de pedido',
-               'transfer_out':'Transferência (saída)','transfer_in':'Transferência (entrada)'}
+               'purchase':'Entrada por compra','transfer_out':'Transferência (saída)','transfer_in':'Transferência (entrada)'}
         for movement in self.store.stock_history(material['id'],variant_id=material['variant_id']):
             self.stock_history_tree.insert('',tk.END,values=(br_date(movement['effective_date']),
                 names.get(movement['kind'],movement['kind']),movement['order_number'] or '—',
@@ -840,7 +844,8 @@ class ERP:
         self.month_combo.set(MONTHS[self.report_month] if self.report_month else 'Total')
         tk.Label(period,text='ANO',bg=SURFACE,fg=OLIVE,font=('Segoe UI',9,'bold')).grid(row=0,column=1,sticky='w',padx=10,pady=(12,3))
         years=sorted({date.today().year-1,date.today().year,date.today().year+1,self.report_year}|
-                     {int(o['created_date'][:4]) for o in self.store.orders() if o['created_date']},reverse=True)
+                     {int(o['created_date'][:4]) for o in self.store.orders() if o['created_date']}|
+                     {int(p['purchase_date'][:4]) for p in self.store.purchases()},reverse=True)
         self.year_combo=ttk.Combobox(period,values=years,state='readonly',width=16)
         self.year_combo.grid(row=1,column=1,sticky='ew',padx=10)
         self.year_combo.set(str(self.report_year))
@@ -850,7 +855,7 @@ class ERP:
         self.month_changed(refresh=False)
         cards=tk.Frame(self.main,bg=BG);cards.pack(fill='x',padx=22,pady=(0,16))
         self.report_labels=[]
-        for i,title in enumerate(('PEDIDOS','EM ABERTO','TOTAL COM PREÇO','TICKET MÉDIO')):
+        for i,title in enumerate(('VENDAS','COMPRAS PAGAS','SALDO COMERCIAL','ESTOQUE PARADO ATUAL')):
             card=tk.Frame(cards,bg=CREAM)
             card.grid(row=0,column=i,padx=5,sticky='nsew')
             cards.grid_columnconfigure(i,weight=1)
@@ -859,9 +864,13 @@ class ERP:
             value.pack(anchor='w',padx=13,pady=(0,12));self.report_labels.append(value)
         self.report_summary=tk.Label(self.main,bg=BG,fg=MUTED,font=('Segoe UI',9),wraplength=850,justify='left')
         self.report_summary.pack(anchor='w',padx=28,pady=(0,12))
-        tk.Label(self.main,text='Itens vendidos por valor registrado',bg=BG,fg=OLIVE,
-                 font=('Segoe UI',14,'bold')).pack(anchor='w',padx=26,pady=(0,4))
-        self.report_tree=grid(self.main,('Produto ou item avulso','Quantidade','Valor registrado'),(490,120,180))
+        notebook=ttk.Notebook(self.main);notebook.pack(fill='both',expand=True,padx=12,pady=(0,10))
+        monthly=tk.Frame(notebook,bg=BG);sold=tk.Frame(notebook,bg=BG)
+        notebook.add(monthly,text='Resultado mensal');notebook.add(sold,text='Itens vendidos')
+        self.finance_tree=grid(monthly,('Mês','Vendas','Compras pagas','Saldo','Resultado'),(110,150,150,150,110))
+        self.finance_tree.tag_configure('positive',foreground='#38733C')
+        self.finance_tree.tag_configure('negative',foreground=RED)
+        self.report_tree=grid(sold,('Produto ou item avulso','Quantidade','Valor registrado'),(490,120,180))
         self.apply_report()
 
     def month_changed(self,refresh=True):
@@ -878,13 +887,18 @@ class ERP:
             return None
         self.report_month,self.report_year=month,year
         self.report_data_current=data
-        for label,value in zip(self.report_labels,(str(data['count']),str(data['open']),
-                                money(data['revenue']),money(data['average_ticket']))):
+        for label,value in zip(self.report_labels,(money(data['financial']['sales']),money(data['financial']['spent']),
+                                money(data['financial']['balance']),money(data['financial']['stock_value']))):
             label.configure(text=value)
-        payments=', '.join(f'{status}: {count}' for status,count in data['payment']) or 'Sem pedidos'
-        self.report_summary.configure(text=f'Pagamento: {payments}.  '
-           f'Pedidos sem valor definido: {data["unknown"]} (fora dos valores e itens vendidos). '
-           +('Pedidos antigos sem data de cadastro aparecem apenas em Total.' if month else ''))
+        self.report_summary.configure(text=f'Pedidos: {data["count"]} • Em aberto: {data["open"]}. '
+            'Vendas pela data de cadastro, excluindo presentes e valores indefinidos; compras pela data do registro. '
+            'Saldo comercial = vendas − compras, não lucro líquido ou fluxo de caixa. '
+            'Estoque parado = saldo positivo atual ao custo cadastrado, mesmo em meses anteriores.')
+        self.finance_tree.delete(*self.finance_tree.get_children())
+        for row in data['financial']['rows']:
+            result='Positivo' if row['balance']>0 else 'Negativo' if row['balance']<0 else 'Equilibrado'
+            self.finance_tree.insert('',tk.END,tags=('positive' if row['balance']>=0 else 'negative',),
+                values=(row['period'],money(row['sales']),money(row['spent']),money(row['balance']),result))
         self.report_tree.delete(*self.report_tree.get_children())
         for index,row in enumerate(data['products']):
             self.report_tree.insert('',tk.END,iid=str(index),values=(row['name'],fmt_qty(row['quantity']),

@@ -247,3 +247,35 @@ Estas alterações de código não acionam a compilação automaticamente. Para
 compilar no computador, baixe o código atualizado e execute
 `compilar_windows.bat`. Para publicar uma atualização, configure antes uma
 versão superior à última Release com `configurar_release.py`.
+
+## Build 2.1.0 — compras e resultado mensal
+
+A aba Compras registra compras já recebidas e pagas de **insumos cadastrados**.
+Produtos acabados continuam sendo compostos por esses insumos. Informe fornecedor
+(opcional), insumo/variação, quantidade na unidade do cadastro e total pago pela
+linha. Ex.: duas embalagens de 100 folhas = 200 un. A data é a data atual.
+Confira os itens antes de confirmar: compras confirmadas ficam disponíveis para
+consulta e não são editadas ou excluídas nesta versão.
+
+A confirmação salva a compra, dá entrada na variação e atualiza o preço e a data
+do insumo em uma transação única. Preço da embalagem = total pago ÷ quantidade
+comprada × quantidade por embalagem cadastrada. Se o mesmo insumo aparece em
+várias linhas/cores, o preço é calculado sobre os totais da compra, igual para
+as cores. Os custos e preços sugeridos dos produtos passam a usar o novo custo;
+os preços dos pedidos já gravados continuam os valores originais.
+
+Relatórios mostram vendas, compras pagas, saldo comercial e resultado positivo,
+negativo ou equilibrado por mês, inclusive no PDF. Vendas usam o mês de cadastro
+do pedido, excluindo presentes e pedidos sem preço; não são recebimentos por
+data de pagamento. Compras usam a data do registro. Não há outras despesas,
+tributos ou histórico completo de recebimentos: o saldo não é lucro líquido nem
+fluxo de caixa. Compras anteriores não registradas não entram no relatório.
+
+Estoque parado significa saldo positivo atual dos insumos/variações, incluindo
+inativos, ao custo cadastrado mais recente. Saldos negativos não reduzem esse
+valor. Não é avaliação histórica do mês nem classificação por tempo sem venda.
+
+Para compilar: baixe a branch main e execute `compilar_windows.bat`. A configuração
+do atualizador já está preparada com a versão 2.1.0 e o endereço deste repositório.
+Não é necessário alterar release-version.txt para compilar localmente; alterá-lo
+aciona o GitHub Actions. Esta entrega não publica uma Release automaticamente.

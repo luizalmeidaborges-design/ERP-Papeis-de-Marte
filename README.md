@@ -294,3 +294,28 @@ textos usam Libre Franklin/Montserrat, com alternativa Segoe UI. Nenhuma
 fonte precisa ser baixada para usar o ERP offline.
 
 Compile com compilar_windows.bat. A versão do atualizador está em 2.1.1.
+
+## Build 2.2.0 — rendimento do produto base e tabelas
+
+Todas as tabelas têm linhas alternadas, destaque dourado sob o mouse e seleção
+bordô com texto branco. Alertas de estoque negativo continuam visíveis.
+
+No produto, informe quantas unidades a composição do produto base produz.
+Exemplo: 1 folha + os demais materiais para fabricar 5 chaveiros → rendimento 5.
+Cadastre as quantidades de TODOS os insumos para essas 5 peças. O custo da
+composição é dividido por 5 para obter o custo unitário e o preço sugerido.
+O preço de tabela também é por peça. No pedido, informe o total de peças:
+1 consome 0,2 da receita; 5 consomem 1 receita; 10 consomem 2 receitas.
+A baixa preserva a cor/variação escolhida. Não arredonda folhas para cima.
+
+Cadastros anteriores recebem rendimento 1; só altere o rendimento depois de
+conferir se a composição representa o lote inteiro. Se o preço de tabela antigo
+era de um kit, ajuste-o para o preço por peça. Vender um kit de 5 corresponde a
+quantidade 5 no pedido; não há cadastro separado de tamanhos de kit nesta versão.
+
+Alterar o rendimento não altera pedidos ou estoque já movimentado. Editar
+somente pagamento/entrega preserva a baixa anterior. Ao mudar os itens ou as
+quantidades de um pedido, o ERP estorna a baixa anterior e aplica a composição
+e o rendimento atuais. Excluir o pedido estorna a quantidade efetivamente baixada.
+
+Compile com compilar_windows.bat. Versão preparada: 2.2.0.

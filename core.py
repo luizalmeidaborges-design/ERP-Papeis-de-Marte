@@ -190,6 +190,8 @@ class Store(Purchasing):
                 self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
             product_columns={r['name'] for r in self.all('PRAGMA table_info(products)')}
+            if 'base_yield' not in product_columns:
+                self.db.execute('ALTER TABLE products ADD COLUMN base_yield INTEGER NOT NULL DEFAULT 1 CHECK(base_yield>0)')
             if 'price_date' not in material_columns:
                 self.db.execute("ALTER TABLE materials ADD COLUMN price_date TEXT NOT NULL DEFAULT ''")
             for name in ('size','grammage'):
@@ -301,7 +303,8 @@ class Store(Purchasing):
         missing = [r['material_code'] for r in rows if r['material_name'] is None]
         if not rows or missing:
             return None, missing
-        return sum(r['qty'] * r['pack_cents'] / r['pack_qty'] for r in rows), []
+        produced=self.one('SELECT base_yield FROM products WHERE id=?',(product_id,))['base_yield']
+        return sum(r['qty'] * r['pack_cents'] / r['pack_qty'] for r in rows)/produced, []
 
     def suggested(self, product):
         cost, missing = self.product_cost(product['id'])
@@ -311,13 +314,15 @@ class Store(Purchasing):
         price = int((Decimal(str(cost)) * Decimal(str(product['markup']))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
         return price, []
 
-    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None):
+    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name or not math.isfinite(markup) or markup < 1:
             raise ValueError("Preencha código e nome; o multiplicador deve ser no mínimo 1.")
         if table_cents is not None and table_cents < 0:
             raise ValueError("Preço de tabela inválido.")
+        if base_yield is not None and (not isinstance(base_yield,int) or isinstance(base_yield,bool) or not 1<=base_yield<=1000000):
+            raise ValueError('O rendimento deve ser um número inteiro entre 1 e 1000000.')
         if not recipe:
             raise ValueError("Adicione ao menos um insumo à composição.")
         with self.db:
@@ -328,6 +333,8 @@ class Store(Purchasing):
             else:
                 id = self.db.execute("INSERT INTO products(code,name,size,grammage,markup,table_cents) VALUES(?,?,?,?,?,?)",
                                      (code,name,size,grammage,markup,table_cents)).lastrowid
+            if base_yield is not None:
+                self.db.execute('UPDATE products SET base_yield=? WHERE id=?',(base_yield,id))
             for pos,(material_code,qty) in enumerate(recipe):
                 if not self.one("SELECT 1 FROM materials WHERE code=? COLLATE NOCASE", (material_code,)):
                     raise ValueError(f"Insumo não encontrado: {material_code}")
@@ -421,7 +428,7 @@ class Store(Purchasing):
             for item in items:
                 if item['product_id'] is None:
                     continue
-                product=self.one('SELECT code FROM products WHERE id=?',(item['product_id'],))
+                product=self.one('SELECT code,base_yield FROM products WHERE id=?',(item['product_id'],))
                 if not product:
                     raise ValueError('Produto do pedido não encontrado.')
                 recipe=self.recipe(item['product_id'])
@@ -441,7 +448,7 @@ class Store(Purchasing):
                             'SELECT 1 FROM material_variants WHERE id=? AND material_id=?',
                             (variant_id,material_id)):
                         raise ValueError(f"Variação inválida para {r['material_name']}.")
-                    usage[(material_id,variant_id)]+=item['qty']*r['qty']
+                    usage[(material_id,variant_id)]+=item['qty']*r['qty']/product['base_yield']
         with self.db:
             if id:
                 self.db.execute("UPDATE orders SET customer=?,due_date=?,payment=?,paid_cents=?,production=?,notes=? WHERE id=?",

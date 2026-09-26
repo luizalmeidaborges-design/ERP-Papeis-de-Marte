@@ -73,3 +73,54 @@ class ScrollArea(tk.Frame):
 
     def reset(self):
         self.canvas.xview_moveto(0);self.canvas.yview_moveto(0)
+
+
+class StripedTreeview(ttk.Treeview):
+    """Alternância visual sem substituir tags de alertas das linhas."""
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        self._stripe_job=None
+        self._hovered=''
+        self.tag_configure('_hover',background='#E1C699')
+        self.tag_configure('_even',background=SURFACE)
+        self.tag_configure('_odd',background='#E8DECE')
+        self.bind('<Motion>',self._hover,add='+')
+        self.bind('<Leave>',lambda _:self._set_hover(''),add='+')
+        self.bind('<Destroy>',self._cleanup,add='+')
+
+    def _cleanup(self,event):
+        if event.widget is self and self._stripe_job:
+            self.after_cancel(self._stripe_job)
+            self._stripe_job=None
+
+    def _queue_stripes(self):
+        if self._stripe_job is None:self._stripe_job=self.after_idle(self._stripe)
+
+    def insert(self,*args,**kwargs):
+        result=super().insert(*args,**kwargs)
+        self._queue_stripes()
+        return result
+
+    def delete(self,*items):
+        super().delete(*items)
+        self._queue_stripes()
+
+    def move(self,*args):
+        super().move(*args)
+        self._queue_stripes()
+
+    def _stripe(self):
+        self._stripe_job=None
+        for index,iid in enumerate(self.get_children()):
+            tags=[t for t in self.item(iid,'tags') if t not in ('_even','_odd')]
+            self.item(iid,tags=tags+['_odd' if index%2 else '_even'])
+
+    def _set_hover(self,iid):
+        if iid==self._hovered:return
+        if self._hovered and self.exists(self._hovered):
+            self.item(self._hovered,tags=[t for t in self.item(self._hovered,'tags') if t!='_hover'])
+        self._hovered=iid
+        if iid and self.exists(iid):self.item(iid,tags=list(self.item(iid,'tags'))+['_hover'])
+
+    def _hover(self,event):
+        self._set_hover(self.identify_row(event.y))

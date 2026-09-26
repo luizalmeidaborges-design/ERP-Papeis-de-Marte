@@ -19,7 +19,7 @@ from core import (Store, asset, automatic_code, br_date, cents, data_directory,
 from updater import check_and_stage, launch_cached, read_config
 
 from visual_theme import (BG,SURFACE,CREAM,RED,RED_DARK,OLIVE,GOLD,MUTED,COFFEE,
-                          ScrollArea,configure_fonts,maximize)
+                          ScrollArea,StripedTreeview,configure_fonts,maximize)
 BODY='Segoe UI'
 HEADING='Georgia'
 MONTHS = ('Total','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho',
@@ -47,7 +47,7 @@ def grid(parent, columns, widths):
     box.pack(fill='both',expand=True,padx=26,pady=(12,23))
     table=tk.Frame(box,bg=SURFACE)
     table.pack(fill='both',expand=True)
-    tree=ttk.Treeview(table,columns=columns,show='headings',selectmode='browse')
+    tree=StripedTreeview(table,columns=columns,show='headings',selectmode='browse')
     for column,width in zip(columns,widths):
         tree.heading(column,text=column)
         tree.column(column,width=width,minwidth=65,anchor='w',stretch=True)
@@ -131,7 +131,7 @@ class ERP(PurchaseUI):
                              fieldbackground=SURFACE,foreground=OLIVE,borderwidth=0)
         self.style.configure('Treeview.Heading',font=(BODY,10,'bold'),background=CREAM,
                              foreground=OLIVE,relief='flat',padding=8)
-        self.style.map('Treeview',background=[('selected','#E8D1B7')],foreground=[('selected',OLIVE)])
+        self.style.map('Treeview',background=[('selected',RED)],foreground=[('selected','white')])
         self.style.configure('TEntry',padding=6,fieldbackground=SURFACE,foreground=COFFEE)
         self.style.configure('TNotebook',background=BG,borderwidth=0)
         self.style.configure('TNotebook.Tab',background=CREAM,foreground=COFFEE,padding=(16,8))
@@ -504,7 +504,7 @@ class ERP(PurchaseUI):
                       ('Editar',lambda:self.edit_product(),False),
                       ('Ativar / inativar',lambda:self.toggle_product(),False)])
         self.filter_bar()
-        self.tree=grid(self.main,('Código','Produto','Tamanho','Gramatura','Custo','Sugerido','Tabela','Média vendida','Estado'),
+        self.tree=grid(self.main,('Código','Produto','Tamanho','Gramatura','Custo/un.','Sugerido/un.','Tabela/un.','Média vendida','Estado'),
                        (95,240,82,80,100,105,98,110,75))
         term=self.search.get().casefold()
         for p in self.store.products():
@@ -536,8 +536,13 @@ class ERP(PurchaseUI):
         size=field(body,'TAMANHO',2,p['size'] if p else '',0,variable=size_var)
         gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var)
         markup=field(body,'MULTIPLICADOR SOBRE O CUSTO',4,str(p['markup']).replace('.',',') if p else '1,8',0)
-        table=field(body,'PREÇO DE TABELA (R$) • OPCIONAL',4,f"{p['table_cents']/100:.2f}".replace('.',',') if p and p['table_cents'] is not None else '',1)
-        tk.Label(win,text='COMPOSIÇÃO • quantidade usada para produzir uma unidade',bg=SURFACE,fg=OLIVE,
+        table=field(body,'PREÇO POR UNIDADE (R$) • OPCIONAL',4,f"{p['table_cents']/100:.2f}".replace('.',',') if p and p['table_cents'] is not None else '',1)
+        yield_var=tk.StringVar()
+        produced=field(body,'PRODUTO BASE • PRODUZ QUANTAS UNIDADES?',6,
+                       p['base_yield'] if p else '1',0,variable=yield_var)
+        tk.Label(body,text='Ex.: 1 folha rende 5 peças → informe 5.\nNo pedido, a quantidade será de peças.',
+                 bg=SURFACE,fg=MUTED,justify='left',font=(BODY,9)).grid(row=7,column=1,sticky='w',padx=10)
+        tk.Label(win,text='COMPOSIÇÃO • quantidade usada para produzir o produto base',bg=SURFACE,fg=OLIVE,
                  font=(BODY,10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
         chooser=tk.Frame(win,bg=SURFACE);chooser.pack(fill='x',padx=20,pady=4)
         materials=[m for m in self.store.materials() if m['active']]
@@ -562,7 +567,7 @@ class ERP(PurchaseUI):
         unit_qty=ttk.Entry(chooser,width=12);unit_qty.insert(0,'1');unit_qty.pack(side='left',padx=5)
         entries=[]
         table_frame=tk.Frame(win,bg=SURFACE);table_frame.pack(fill='both',expand=True,padx=20,pady=5)
-        tree=ttk.Treeview(table_frame,columns=('Insumo','Qtd','Custo'),show='headings',height=6)
+        tree=StripedTreeview(table_frame,columns=('Insumo','Qtd','Custo'),show='headings',height=6)
         for column,width in [('Insumo',420),('Qtd',90),('Custo',120)]:tree.heading(column,text=column);tree.column(column,width=width)
         tree.pack(side='left',fill='both',expand=True)
         scroll=ttk.Scrollbar(table_frame,orient='vertical',command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set)
@@ -579,8 +584,15 @@ class ERP(PurchaseUI):
                                                          fmt_qty(amount),money(round(value)) if value is not None else 'Revisar'))
             try:factor=float(markup.get().replace(',','.'))
             except ValueError:factor=1.8
+            try:
+                count=int(produced.get())
+                if count<1:raise ValueError()
+            except ValueError:
+                total_label.configure(text='Informe um rendimento inteiro maior que zero.');return
             total_label.configure(text=('Corrija os insumos: '+', '.join(missing)) if missing else
-                f'Custo: {money(round(running))}    •    Sugerido: {money(round(running*factor))}')
+                f'Base ({count} un.): {money(round(running))} • Custo/un.: {money(round(running/count))} • Sugerido/un.: {money(round(running/count*factor))}')
+        yield_var.trace_add('write',lambda *_:redraw())
+        markup.bind('<KeyRelease>',lambda _:redraw())
         def add():
             try:
                 if combo.get() not in mapping:raise ValueError('Digite para buscar e selecione um insumo na lista.')
@@ -600,7 +612,7 @@ class ERP(PurchaseUI):
                 factor=float(markup.get().strip().replace(',','.'))
                 self.store.save_product(id=p['id'] if p else None,code=code.get(),name=name.get(),
                     size=size.get(),grammage=gram.get(),markup=factor,
-                    table_cents=cents(table.get(),allow_empty=True),recipe=entries)
+                    table_cents=cents(table.get(),allow_empty=True),recipe=entries,base_yield=int(produced.get()))
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')
@@ -617,7 +629,7 @@ class ERP(PurchaseUI):
         table_box=tk.Frame(self.main,bg=SURFACE)
         table_box.pack(fill='x',padx=26,pady=(0,13))
         columns=('Código','Insumo','Variação','Tamanho','Gramatura','Saldo','Unidade','Situação')
-        self.stock_tree=ttk.Treeview(table_box,columns=columns,show='headings',height=9,selectmode='browse')
+        self.stock_tree=StripedTreeview(table_box,columns=columns,show='headings',height=9,selectmode='browse')
         for col,width in zip(columns,(115,210,170,92,88,95,76,88)):
             self.stock_tree.heading(col,text=col);self.stock_tree.column(col,width=width,minwidth=70)
         scroll=ttk.Scrollbar(table_box,orient='vertical',command=self.stock_tree.yview)
@@ -1077,7 +1089,7 @@ class ERP(PurchaseUI):
         items=[dict(product_id=i['product_id'],description=i['description'],qty=i['qty'],
                     unit_cents=i['unit_cents'],variants=i['variants'])
                for i in self.store.items(o['id'])] if o else []
-        tree=ttk.Treeview(content,columns=('Descrição','Variações','Qtd','Valor un.','Total'),show='headings',height=5)
+        tree=StripedTreeview(content,columns=('Descrição','Variações','Qtd','Valor un.','Total'),show='headings',height=5)
         for col,w in [('Descrição',295),('Variações',255),('Qtd',65),('Valor un.',100),('Total',100)]:
             tree.heading(col,text=col);tree.column(col,width=w)
         tree.pack(fill='both',expand=True,padx=25,pady=(8,3))

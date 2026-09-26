@@ -87,7 +87,7 @@ class Finishing:
         if cost is None:raise ValueError('Revise a composição do produto.')
         if not self.laminated(product_id):
             if key!='brilhante':raise ValueError('O produto não usa o BOPP padrão vinculado em Acabamentos.')
-            return dict(cost_unit_cents=cost,unit_cents=product['table_cents'] if product['table_cents'] is not None else rounded(cost*product['markup']))
+            return dict(pricing_mode='legacy',cost_unit_cents=cost,unit_cents=product['table_cents'] if product['table_cents'] is not None else rounded(cost*product['markup']))
         standard=self.one("SELECT * FROM finishes WHERE key='brilhante'")
         chosen=self.one('SELECT * FROM finishes WHERE key=?',(key,))
         if not chosen:raise ValueError('Acabamento inválido.')
@@ -99,5 +99,5 @@ class Finishing:
         amount=sum(r['qty'] for r in self.recipe(product_id) if r['material_code'].casefold()==source['code'].casefold())/product['base_yield']
         cost=cost-amount*source['pack_cents']/source['pack_qty']+amount*target['pack_cents']/target['pack_qty']
         price=rounded(cost*product['markup'])+chosen['extra_cents']
-        return dict(finish_key=key,finish_name=chosen['name'],finish_source_id=source['id'],finish_material_id=target['id'],
+        return dict(pricing_mode='legacy',finish_key=key,finish_name=chosen['name'],finish_source_id=source['id'],finish_material_id=target['id'],
                     cost_unit_cents=cost,unit_cents=price)

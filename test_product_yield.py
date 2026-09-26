@@ -1,3 +1,4 @@
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -29,13 +30,13 @@ class ProductYieldTests(unittest.TestCase):
             production='Novo',notes='',items=[dict(product_id=self.pid,description='Chaveiro',qty=n,
             unit_cents=400,variants={self.mid:self.vid})])
 
-    def test_cost_and_fractional_consumption_and_reversal(self):
+    def test_cost_and_whole_batch_consumption_and_reversal(self):
         self.assertEqual(self.store.product_cost(self.pid)[0],200)
         self.assertEqual(self.store.suggested(self.store.products()[0])[0],400)
         for n in (1,5,10,20):
             with self.subTest(quantity=n):
                 oid=self.order(n)
-                self.assertAlmostEqual(self.balance(),10-n/5)
+                self.assertAlmostEqual(self.balance(),10-math.ceil(n/5))
                 self.store.delete_order(oid)
                 self.assertAlmostEqual(self.balance(),10)
 
@@ -43,9 +44,9 @@ class ProductYieldTests(unittest.TestCase):
         oid=self.order(1)
         self.product(10,self.pid)
         self.order(1,oid,payment='Pago')
-        self.assertAlmostEqual(self.balance(),9.8)
+        self.assertAlmostEqual(self.balance(),9)
         self.order(5,oid)
-        self.assertAlmostEqual(self.balance(),9.5)
+        self.assertAlmostEqual(self.balance(),9)
         self.store.delete_order(oid)
         self.assertAlmostEqual(self.balance(),10)
 

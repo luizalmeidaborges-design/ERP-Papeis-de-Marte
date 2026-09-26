@@ -14,7 +14,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from automatic_backup import AutomaticBackup
-from finishing_ui import configure_finishes
+from catalog_ui import CatalogUI
 from core import (Store, asset, automatic_code, br_date, cents, data_directory,
                   export_order_pdf, export_report_pdf, filter_orders, fmt_qty, money, parse_date, quantity)
 from updater import check_and_stage, launch_cached, read_config
@@ -112,12 +112,11 @@ def pick_date(parent, entry):
 from purchase_ui import PurchaseUI
 
 
-class ERP(PurchaseUI):
+class ERP(CatalogUI,PurchaseUI):
     def __init__(self,root):
         self.root=root
         workbook=asset('Precificação.xlsx')
         self.store=Store(data_directory()/'marte.db',workbook if workbook.is_file() else None)
-        self.store.ensure_finish_catalog()
         root.title('Papéis de Marte • ERP offline')
         global BODY,HEADING
         BODY,HEADING=configure_fonts(root)
@@ -289,7 +288,7 @@ class ERP(PurchaseUI):
                  font=(HEADING,14,'bold')).pack(pady=(3,2))
         tk.Label(side,text='Thayna Donadei',bg=OLIVE,fg='#E8CDA7',
                  font=(BODY,9)).pack(pady=(0,16))
-        for name,icon in [('Papéis de Marte','⌂'),('Insumos','◈'),('Produtos','▦'),('Pedidos','▤'),
+        for name,icon in [('Papéis de Marte','⌂'),('Insumos','◈'),('Produtos','▦'),('Clientes','♙'),('Pedidos','▤'),
                           ('Calendário','▦'),('Estoque','◉'),('Compras','▤'),('Relatórios','▥')]:
             nav=tk.Button(side,text=f'  {icon}    {name}',anchor='w',command=lambda n=name:self.navigate(n),
                       bg=OLIVE,fg='white',activebackground='#686344',activeforeground='white',
@@ -332,6 +331,7 @@ class ERP(PurchaseUI):
         if self.page=='Papéis de Marte':self.home()
         elif self.page=='Insumos':self.material_page()
         elif self.page=='Produtos':self.product_page()
+        elif self.page=='Clientes':self.customer_page()
         elif self.page=='Pedidos':self.order_page()
         elif self.page=='Calendário':self.calendar_page()
         elif self.page=='Estoque':self.stock_page()
@@ -391,21 +391,20 @@ class ERP(PurchaseUI):
     def material_page(self):
         self.toolbar('Preço da embalagem ÷ quantidade = custo por unidade.',
                      [('Novo insumo',lambda:self.material_dialog(),True),
-                      ('Acabamentos',lambda:configure_finishes(self),False),
                       ('Editar',lambda:self.edit_material(),False),
                       ('Ativar / inativar',lambda:self.toggle_material(),False)])
-        filters=tk.Frame(self.main,bg=BG);filters.pack(fill='x',padx=26,pady=5)
+        filters=self.collapsible_filters()
         variables={}
         for i,(key,label) in enumerate((('name','Nome / código'),('size','Tamanho'),
-                                       ('grammage','Gramatura'),('variant','Variação'),('state','Estado'))):
+                                       ('grammage','Gramatura'),('variant','Opção / variação'),('category','Categoria'),('state','Estado'))):
             filters.grid_columnconfigure(i,weight=1)
             tk.Label(filters,text=label,bg=BG,fg=MUTED).grid(row=0,column=i,sticky='w',padx=3)
             var=tk.StringVar(value=self.material_filters.get(key,'Ativo' if key=='state' else ''));variables[key]=var
             entry=(ttk.Combobox(filters,textvariable=var,values=('','Ativo','Inativo'),state='readonly',width=10)
                    if key=='state' else ttk.Entry(filters,textvariable=var,width=14))
             entry.grid(row=1,column=i,sticky='ew',padx=3)
-        self.tree=grid(self.main,('Código','Insumo','Tamanho','Gramatura','Variações','Embalagem','Preço','Custo/un.','Estado','Data do preço'),
-                       (110,155,75,75,165,100,95,100,70,110))
+        self.tree=grid(self.main,('Código','Insumo','Categoria','Tamanho','Gramatura','Variações','Embalagem','Preço máximo','Custo/un.','Estado','Data do preço'),
+                       (110,155,95,75,75,165,100,95,100,70,110))
         def populate(*_):
             self.material_filters={key:var.get() for key,var in variables.items()}
             self.tree.delete(*self.tree.get_children())
@@ -413,17 +412,17 @@ class ERP(PurchaseUI):
                 names=', '.join(v['name'] for v in self.store.variants(m['id'],active_only=True))
                 state='Ativo' if m['active'] else 'Inativo'
                 values={'name':m['code']+' '+m['name'],'size':m['size'],
-                        'grammage':m['grammage'],'variant':names,'state':state}
+                        'grammage':m['grammage'],'variant':names,'category':m['category'],'state':state}
                 if any(value.strip().casefold() not in values[key].casefold()
                        for key,value in self.material_filters.items() if key!='state'):continue
                 if self.material_filters['state'] and self.material_filters['state']!=state:continue
-                unit_cost=m['pack_cents']/m['pack_qty']
-                self.tree.insert('',tk.END,iid=str(m['id']),values=(m['code'],m['name'],m['size'],m['grammage'],names,
-                    fmt_qty(m['pack_qty'])+' '+m['unit'],money(m['pack_cents']),
+                max_price=self.store.material_price(m['id']);unit_cost=max_price/m['pack_qty']
+                self.tree.insert('',tk.END,iid=str(m['id']),values=(m['code'],m['name'],m['category'],m['size'],m['grammage'],names,
+                    fmt_qty(m['pack_qty'])+' '+m['unit'],money(max_price),
                     f'R$ {unit_cost/100:.4f}'.replace('.',','),state,br_date(m['price_date'])))
         def clear():
             for key,var in variables.items():var.set('Ativo' if key=='state' else '')
-        button(filters,'Limpar',clear,False).grid(row=1,column=5,padx=5)
+        button(filters,'Limpar',clear,False).grid(row=1,column=6,padx=5)
         for var in variables.values():var.trace_add('write',populate)
         populate()
         self.tree.bind('<Double-1>',lambda _:self.edit_material())
@@ -452,75 +451,6 @@ class ERP(PurchaseUI):
         if isinstance(exc,sqlite3.IntegrityError):text='Código já cadastrado. Nos produtos, informe outro código; nos insumos, revise nome, tamanho e gramatura.'
         messagebox.showerror('Não foi possível salvar',text,parent=win)
 
-    def material_dialog(self,m=None,parent=None,on_saved=None):
-        win=self.modal('Editar insumo' if m else 'Novo insumo',700,610)
-        if parent:
-            win.transient(parent)
-            def restore_grab(event):
-                if event.widget is win and parent.winfo_exists():parent.grab_set()
-            win.bind('<Destroy>',restore_grab)
-        frame=tk.Frame(win,bg=SURFACE);frame.pack(fill='x',padx=16)
-        frame.grid_columnconfigure(0,weight=1);frame.grid_columnconfigure(1,weight=1)
-        name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
-        name=field(frame,'NOME DO INSUMO',0,m['name'] if m else '',0,variable=name_var)
-        unit=field(frame,'UNIDADE (un, m, g...)',0,m['unit'] if m else 'un',1)
-        size=field(frame,'TAMANHO',2,m['size'] if m else '',0,variable=size_var)
-        gram=field(frame,'GRAMATURA',2,m['grammage'] if m else '',1,variable=gram_var)
-        qty=field(frame,'QUANTIDADE POR EMBALAGEM',4,fmt_qty(m['pack_qty']) if m else '1',0)
-        price=field(frame,'PREÇO DA EMBALAGEM (R$)',4,f"{m['pack_cents']/100:.2f}".replace('.',',') if m else '',1)
-        spec=field(frame,'OBSERVAÇÕES (OPCIONAL)',6,m['specification'] if m else '',0)
-        code=field(frame,'CÓDIGO GERADO',6,m['code'] if m else '',1)
-        variant_names=', '.join(v['name'] for v in self.store.variants(m['id'],active_only=True)) if m else ''
-        variants=field(frame,'VARIAÇÕES POSSÍVEIS (SEPARADAS POR VÍRGULA)',8,variant_names,0,width=48)
-        price_date=field(frame,'DATA DO PREÇO • DD/MM/AAAA',8,
-                         br_date(m['price_date']) if m and m['price_date'] else ('' if m else date.today().strftime('%d/%m/%Y')),1)
-        code.configure(state='readonly')
-        def update_code(*_):
-            if m:return
-            try:computed=automatic_code(name_var.get(),size_var.get(),gram_var.get())
-            except ValueError:computed=''
-            code.configure(state='normal');code.delete(0,tk.END);code.insert(0,computed);code.configure(state='readonly')
-        for variable in (name_var,size_var,gram_var):variable.trace_add('write',update_code)
-        update_code()
-        tk.Label(win,text='Código: 3 caracteres do nome + tamanho + gramatura. Ex.: OFFA4150.',
-                 bg=SURFACE,fg=MUTED,font=(BODY,9)).pack(anchor='w',padx=26,pady=(10,0))
-        tk.Label(win,text='Ex.: Dourado, Prata, Preto. Todas usam o mesmo preço do insumo.',
-                 bg=SURFACE,fg=MUTED,font=(BODY,9)).pack(anchor='w',padx=26,pady=(3,0))
-        def save():
-            try:
-                entered_date=price_date.get().strip()
-                try:reference=parse_date(entered_date) if entered_date else ''
-                except ValueError:raise ValueError('Informe a data do preço em DD/MM/AAAA.')
-                saved_id=self.store.save_material(id=m['id'] if m else None,code=m['code'] if m else None,name=name.get(),
-                  size=size.get(),grammage=gram.get(),specification=spec.get(),unit=unit.get(),
-                  pack_qty=quantity(qty.get()),pack_cents=cents(price.get()),
-                  variants=variants.get().split(','),price_date=reference)
-                win.destroy()
-                if on_saved:on_saved(saved_id)
-                else:self.render()
-            except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
-        button(win,'Salvar insumo',save).pack(side='right',padx=26,pady=25)
-
-    def product_page(self):
-        self.toolbar('Sugestão = custo dos insumos × multiplicador. Média = preço realizado por unidade.',
-                     [('Novo produto',lambda:self.product_dialog(),True),
-                      ('Editar',lambda:self.edit_product(),False),
-                      ('Ativar / inativar',lambda:self.toggle_product(),False)])
-        self.filter_bar()
-        self.tree=grid(self.main,('Código','Produto','Tamanho','Gramatura','Custo/un.','Sugerido/un.','Tabela/un.','Média vendida','Estado'),
-                       (95,240,82,80,100,105,98,110,75))
-        term=self.search.get().casefold()
-        for p in self.store.products():
-            if term not in (p['code']+' '+p['name']+' '+p['size']+' '+p['grammage']).casefold():continue
-            cost,missing=self.store.product_cost(p['id']);suggested,_=self.store.suggested(p)
-            status='Revisar' if cost is None else ('Ativo' if p['active'] else 'Inativo')
-            self.tree.insert('',tk.END,iid=str(p['id']),values=(p['code'],p['name'],p['size'],p['grammage'],
-                 money(round(cost)) if cost is not None else 'Revisar',money(suggested) if suggested is not None else 'Revisar',
-                 money(p['table_cents']),money(self.store.mean_price(p['id'])),status))
-        tk.Label(self.main,text='"Revisar" indica composição vazia ou insumo não encontrado na planilha original.',
-                 bg=BG,fg=RED,font=(BODY,9)).pack(anchor='w',padx=28,pady=(0,8))
-        self.tree.bind('<Double-1>',lambda _:self.edit_product())
-
     def edit_product(self):
         id=self.selection(self.tree)
         if id:self.product_dialog(self.store.one('SELECT * FROM products WHERE id=?',(id,)))
@@ -529,99 +459,8 @@ class ERP(PurchaseUI):
         id=self.selection(self.tree)
         if id:self.store.toggle_product(id);self.render()
 
-    def product_dialog(self,p=None):
-        win=self.modal('Editar produto' if p else 'Novo produto',850,735)
-        body=tk.Frame(win,bg=SURFACE);body.pack(fill='x',padx=16)
-        for i in range(2):body.grid_columnconfigure(i,weight=1)
-        name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
-        name=field(body,'NOME DO PRODUTO',0,p['name'] if p else '',0,variable=name_var)
-        code=field(body,'CÓDIGO DO PRODUTO',0,p['code'] if p else '',1)
-        size=field(body,'TAMANHO',2,p['size'] if p else '',0,variable=size_var)
-        gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var)
-        markup=field(body,'MULTIPLICADOR SOBRE O CUSTO',4,str(p['markup']).replace('.',',') if p else '1,8',0)
-        table=field(body,'PREÇO POR UNIDADE (R$) • OPCIONAL',4,f"{p['table_cents']/100:.2f}".replace('.',',') if p and p['table_cents'] is not None else '',1)
-        yield_var=tk.StringVar()
-        produced=field(body,'PRODUTO BASE • PRODUZ QUANTAS UNIDADES?',6,
-                       p['base_yield'] if p else '1',0,variable=yield_var)
-        tk.Label(body,text='Ex.: 1 folha rende 5 peças → informe 5.\nNo pedido, a quantidade será de peças.',
-                 bg=SURFACE,fg=MUTED,justify='left',font=(BODY,9)).grid(row=7,column=1,sticky='w',padx=10)
-        tk.Label(win,text='COMPOSIÇÃO • quantidade usada para produzir o produto base',bg=SURFACE,fg=OLIVE,
-                 font=(BODY,10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
-        chooser=tk.Frame(win,bg=SURFACE);chooser.pack(fill='x',padx=20,pady=4)
-        materials=[m for m in self.store.materials() if m['active']]
-        mapping={f"{m['code']}  ·  {m['name']} ({m['size']} {m['grammage']})":m['code'] for m in materials}
-        combo=ttk.Combobox(chooser,values=list(mapping),state='normal',width=38)
-        combo.pack(side='left',padx=5,fill='x',expand=True)
-        def search_materials(event=None):
-            term=combo.get().strip().casefold()
-            combo.configure(values=[label for label in mapping if term in label.casefold()])
-        combo.bind('<KeyRelease>',search_materials)
-        def refresh_materials(saved_id):
-            mapping.clear()
-            for material in self.store.materials():
-                if not material['active']:continue
-                label=f"{material['code']}  ·  {material['name']} ({material['size']} {material['grammage']})"
-                mapping[label]=material['code']
-                if material['id']==saved_id:combo.set(label)
-            combo.configure(values=list(mapping))
-            win.grab_set()
-        button(chooser,'Novo insumo',lambda:self.material_dialog(parent=win,on_saved=refresh_materials),False).pack(side='left',padx=3)
-
-        unit_qty=ttk.Entry(chooser,width=12);unit_qty.insert(0,'1');unit_qty.pack(side='left',padx=5)
-        entries=[]
-        table_frame=tk.Frame(win,bg=SURFACE);table_frame.pack(fill='both',expand=True,padx=20,pady=5)
-        tree=StripedTreeview(table_frame,columns=('Insumo','Qtd','Custo'),show='headings',height=6)
-        for column,width in [('Insumo',420),('Qtd',90),('Custo',120)]:tree.heading(column,text=column);tree.column(column,width=width)
-        tree.pack(side='left',fill='both',expand=True)
-        scroll=ttk.Scrollbar(table_frame,orient='vertical',command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set)
-        total_label=tk.Label(win,text='',bg=SURFACE,fg=RED,font=(BODY,12,'bold'))
-        total_label.configure(justify='left',anchor='w',font=(BODY,11,'bold'))
-        total_label.pack(side='bottom',fill='x',padx=25,pady=6,before=table_frame)
-        def redraw():
-            tree.delete(*tree.get_children());running=0;missing=[]
-            for i,(material_code,amount) in enumerate(entries):
-                m=self.store.one('SELECT * FROM materials WHERE code=? COLLATE NOCASE',(material_code,))
-                value=amount*m['pack_cents']/m['pack_qty'] if m else None
-                if value is None:missing.append(material_code)
-                else:running+=value
-                tree.insert('',tk.END,iid=str(i),values=(f"{material_code} · {m['name']}" if m else material_code+' · NÃO ENCONTRADO',
-                                                         fmt_qty(amount),money(round(value)) if value is not None else 'Revisar'))
-            try:factor=float(markup.get().replace(',','.'))
-            except ValueError:factor=1.8
-            try:
-                count=int(produced.get())
-                if count<1:raise ValueError()
-            except ValueError:
-                total_label.configure(text='Informe um rendimento inteiro maior que zero.');return
-            total_label.configure(text=('Corrija os insumos: '+', '.join(missing)) if missing else
-                f'Custo do produto base: {money(round(running))}\nRendimento: {count} unidades\nCusto por unidade: {money(round(running/count))}\nPreço sugerido: {money(round(running/count*factor))}')
-        yield_var.trace_add('write',lambda *_:redraw())
-        markup.bind('<KeyRelease>',lambda _:redraw())
-        def add():
-            try:
-                if combo.get() not in mapping:raise ValueError('Digite para buscar e selecione um insumo na lista.')
-                entries.append((mapping[combo.get()],quantity(unit_qty.get())))
-                redraw()
-            except (ValueError,KeyError) as exc:self.fail(exc,win)
-        button(chooser,'Adicionar',add,False).pack(side='left',padx=5)
-        if p:entries.extend((r['material_code'],r['qty']) for r in self.store.recipe(p['id']))
-        redraw()
-        def remove():
-            selected=tree.selection()
-            if selected:entries.pop(int(selected[0]));redraw()
-        buttons=tk.Frame(win,bg=SURFACE);buttons.pack(side='bottom',fill='x',padx=23,pady=(3,16),before=table_frame)
-        button(buttons,'Remover insumo selecionado',remove,False).pack(side='left')
-        def save():
-            try:
-                factor=float(markup.get().strip().replace(',','.'))
-                self.store.save_product(id=p['id'] if p else None,code=code.get(),name=name.get(),
-                    size=size.get(),grammage=gram.get(),markup=factor,
-                    table_cents=cents(table.get(),allow_empty=True),recipe=entries,base_yield=int(produced.get()))
-                win.destroy();self.render()
-            except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
-        button(buttons,'Salvar produto',save).pack(side='right')
-
     def stock_page(self):
+        self.product_stock_panel(self.main)
         self.toolbar('Saldos separados por variação e histórico de movimentações.',
                      [('Entrada',lambda:self.stock_dialog('entry'),True),
                       ('Retirada forçada',lambda:self.stock_dialog('manual_out'),False),
@@ -798,8 +637,7 @@ class ERP(PurchaseUI):
                      [('Novo pedido',lambda:self.order_dialog(),True),('Editar',lambda:self.edit_order(),False),
                       ('Gerar PDF',lambda:self.pdf_selected(),False),
                       ('Excluir pedido',self.delete_selected_order,False)])
-        panel=tk.Frame(self.main,bg=CREAM)
-        panel.pack(fill='x',padx=26,pady=(3,8))
+        panel=self.collapsible_filters()
         specs=[('number','Nº'),('customer','Cliente'),('items','Itens'),('created','Criado'),('due','Entrega'),
                ('payment','Pagamento'),('production','Produção'),('min_total','Total mínimo (R$)'),
                ('max_total','Total máximo (R$)'),('min_remaining','Restante mínimo (R$)'),
@@ -976,37 +814,31 @@ class ERP(PurchaseUI):
     def ask_variants(self,parent,product):
         required=self.store.variant_requirements(product['id'])
         if not required:return {}
-        dialog=tk.Toplevel(parent)
-        dialog.title('Escolha as variações dos insumos')
-        dialog.configure(bg=SURFACE)
-        dialog.geometry(f'560x{min(500,170+72*len(required))}')
-        dialog.transient(parent);dialog.grab_set()
-        tk.Label(dialog,text=product['name'],bg=SURFACE,fg=OLIVE,
-                 font=(BODY,15,'bold')).pack(anchor='w',padx=23,pady=(18,4))
-        tk.Label(dialog,text='Escolha uma variação para cada insumo. Todas têm o mesmo custo.',
-                 bg=SURFACE,fg=MUTED,font=(BODY,9)).pack(anchor='w',padx=23,pady=(0,11))
+        dialog=self.modal('Escolha opções e variações',800,560);dialog.transient(parent)
+        actions=tk.Frame(dialog,bg=SURFACE);actions.pack(side='bottom',fill='x',padx=22,pady=15)
+        area=ScrollArea(dialog,background=SURFACE,min_width=700,min_height=100)
+        area.pack(fill='both',expand=True);content=area.content
+        tk.Label(content,text=product['name'],bg=SURFACE,fg=OLIVE,font=(BODY,14,'bold')).pack(anchor='w',padx=20,pady=12)
         choices=[]
         for material,options in required:
-            row=tk.Frame(dialog,bg=SURFACE);row.pack(fill='x',padx=23,pady=5)
-            tk.Label(row,text=f"{material['name']} ({material['code']})",bg=SURFACE,fg=OLIVE,
-                     font=(BODY,10),width=25,anchor='w').pack(side='left')
-            combo=ttk.Combobox(row,values=[v['name'] for v in options],state='readonly',width=24)
-            combo.pack(side='left',fill='x',expand=True)
-            choices.append((material,options,combo))
+            row=tk.LabelFrame(content,text=material['name'],bg=SURFACE,fg=OLIVE);row.pack(fill='x',padx=20,pady=8)
+            group=ttk.Combobox(row,values=list(dict.fromkeys(v['option_name'] or 'Cor' for v in options)),state='readonly',width=25)
+            group.pack(side='left',fill='x',expand=True,padx=8,pady=8)
+            value=ttk.Combobox(row,state='readonly',width=30);value.pack(side='left',fill='x',expand=True,padx=8,pady=8)
+            def select(_=None,g=group,c=value,opts=options):
+                c.configure(values=[v['name'] for v in opts if (v['option_name'] or 'Cor')==g.get()]);c.set('')
+            group.bind('<<ComboboxSelected>>',select)
+            group.current(0);select();choices.append((material,options,value))
         result=[None]
         def confirm():
             if any(not combo.get() for _,_,combo in choices):
-                messagebox.showerror('Falta uma variação','Escolha a variação de cada insumo.',parent=dialog)
-                return
-            result[0]={m['id']:next(v['id'] for v in options if v['name']==combo.get())
-                       for m,options,combo in choices}
+                self.fail(ValueError('Escolha a variação de cada insumo.'),dialog);return
+            result[0]={m['id']:next(v['id'] for v in options if v['name']==combo.get()) for m,options,combo in choices}
             dialog.destroy()
-        actions=tk.Frame(dialog,bg=SURFACE);actions.pack(fill='x',padx=22,pady=17)
         button(actions,'Cancelar',dialog.destroy,False).pack(side='left')
-        button(actions,'Confirmar variações',confirm).pack(side='right')
-        dialog.protocol('WM_DELETE_WINDOW',dialog.destroy)
+        button(actions,'Confirmar',confirm).pack(side='right')
         parent.wait_window(dialog)
-        parent.grab_set()
+        if parent.winfo_exists():parent.grab_set()
         return result[0]
 
     def order_dialog(self,o=None):
@@ -1030,7 +862,23 @@ class ERP(PurchaseUI):
         canvas.bind('<Configure>',lambda event:canvas.itemconfigure(content_window,width=event.width))
         body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=15)
         for i in range(2):body.grid_columnconfigure(i,weight=1)
-        customer=field(body,'CLIENTE',0,o['customer'] if o else '',0)
+        tk.Label(body,text='CLIENTE CADASTRADO',bg=SURFACE,fg=OLIVE).grid(row=0,column=0,sticky='w',padx=10,pady=(12,3))
+        clientbox=tk.Frame(body,bg=SURFACE);clientbox.grid(row=1,column=0,sticky='ew',padx=10)
+        customer=ttk.Combobox(clientbox,state='readonly');customer.pack(side='left',fill='x',expand=True)
+        customer_map={}
+        def reload_customers(selected=None):
+            customer_map.clear()
+            for c in self.store.customers():customer_map[f"{c['name']} · {c['phone'] or c['id']}"]=c['id']
+            customer.configure(values=list(customer_map))
+            for label,cid in customer_map.items():
+                if cid==selected:customer.set(label);break
+        def new_customer():
+            cid=self.customer_dialog(parent=win,name=o['customer'] if o and not o['customer_id'] else '')
+            reload_customers(cid)
+            return cid
+        reload_customers(o['customer_id'] if o else None)
+        button(clientbox,'+',new_customer,False).pack(side='left',padx=4)
+        if o and not o['customer_id']:customer.set(o['customer'])
         tk.Label(body,text='ENTREGA • DD/MM/AAAA',bg=SURFACE,fg=OLIVE,
                  font=(BODY,9,'bold')).grid(row=0,column=1,sticky='w',padx=10,pady=(12,3))
         due_box=tk.Frame(body,bg=SURFACE)
@@ -1070,56 +918,49 @@ class ERP(PurchaseUI):
         desc=ttk.Entry(row,width=29);desc.pack(side='left',padx=4,fill='x',expand=True)
         amount=ttk.Entry(row,width=7);amount.insert(0,'1');amount.pack(side='left',padx=4)
         price=ttk.Entry(row,width=12);price.pack(side='left',padx=4)
-        finish_key=tk.StringVar(value='brilhante')
-        finish_box=tk.LabelFrame(content,text='Acabamento do item',bg=SURFACE,fg=OLIVE)
-        finish_box.pack(fill='x',padx=25,pady=8)
-        finish_summary=tk.StringVar(value='Selecione um produto.')
-        finish_buttons=[]
+        kitrow=tk.Frame(content,bg=SURFACE);kitrow.pack(fill='x',padx=25,pady=8)
+        tk.Label(kitrow,text='Kit (peças):',bg=SURFACE,fg=OLIVE).pack(side='left')
+        kit=ttk.Combobox(kitrow,state='readonly',width=12);kit.pack(side='left',padx=6)
+        tk.Label(kitrow,text='Origem:',bg=SURFACE,fg=OLIVE).pack(side='left')
+        source=ttk.Combobox(kitrow,state='readonly',values=('Produzir','Estoque pronto'),width=18);source.set('Produzir');source.pack(side='left',padx=6)
+        finish_summary=tk.StringVar(value='Selecione um produto e a quantidade de peças.')
         current_quote={}
         def quote_refresh(reset_price=True):
             nonlocal current_quote
-            current_quote={}
-            p=product_map.get(selector.get())
+            current_quote={};p=product_map.get(selector.get())
             if not p:
-                finish_summary.set('Item avulso: custo e acabamento não calculados.')
-                for widget in finish_buttons:widget.configure(state='disabled')
-                return
-            applicable=self.store.laminated(p['id'])
-            for widget in finish_buttons:widget.configure(state='normal' if applicable else 'disabled')
-            if not applicable:finish_key.set('brilhante')
+                finish_summary.set('Item avulso: informe descrição, quantidade e preço.');return
             try:
-                current_quote=self.store.finish_quote(p['id'],finish_key.get())
+                from catalog_core import positive_int,rounded
+                qty=positive_int(amount.get(),'Quantidade')
+                current_quote=self.store.order_quote(p['id'],qty,'stock' if source.get()=='Estoque pronto' else 'production',selected_variants)
                 if reset_price:
                     price.delete(0,tk.END);price.insert(0,f"{current_quote['unit_cents']/100:.2f}".replace('.',','))
-                sale=cents(price.get());qty=quantity(amount.get());cost=current_quote['cost_unit_cents']
-                margin=(sale-cost)/sale*100 if sale else 0
-                finish_summary.set(f"Custo/un.: {money(round(cost))} • Venda/un.: {money(sale)} • Margem bruta: {margin:.1f}%\n"
-                    f"Custo dos itens: {money(round(cost*qty))} • Total de venda: {money(round(sale*qty))}"
-                    +('' if applicable else '\nSem BOPP padrão vinculado na composição.'))
-            except ValueError as exc:
-                current_quote={};finish_summary.set(str(exc))
-        for key,label in [('brilhante','Brilhante (Incluso)'),('fosco','Fosco Anti-risco'),('holografico','Holográfico')]:
-            radio=tk.Radiobutton(finish_box,text=label,variable=finish_key,value=key,
-                command=quote_refresh,bg=SURFACE,fg=OLIVE,selectcolor=CREAM)
-            radio.pack(side='left',padx=8);finish_buttons.append(radio)
-        def settings():
-            configure_finishes(self,win);quote_refresh()
-        button(finish_box,'Configurar',settings,False).pack(side='right',padx=5)
+                sale=cents(price.get());cost=current_quote['cost_unit_cents'];margin=(sale-cost)/sale*100 if sale else 0
+                batch_text=(f"{current_quote['batches']} lote(s) • {current_quote['produced_qty']} peças produzidas • {current_quote['produced_qty']-qty} para estoque" if source.get()=='Produzir' else 'Retirada do estoque pronto • sem nova baixa de insumos')
+                finish_summary.set(f"{batch_text}\nCusto total: {money(rounded(cost*qty))} • Custo/peça: {money(rounded(cost))} • Venda total: {money(round(sale*qty))} • Margem bruta: {margin:.1f}%")
+            except ValueError as exc:current_quote={};finish_summary.set(str(exc))
         tk.Label(content,textvariable=finish_summary,bg=SURFACE,fg=RED,justify='left',wraplength=800).pack(anchor='w',padx=25)
-        amount.bind('<KeyRelease>',lambda _:quote_refresh(False))
+        amount.bind('<KeyRelease>',lambda _:quote_refresh())
         price.bind('<KeyRelease>',lambda _:quote_refresh(False))
+        source.bind('<<ComboboxSelected>>',lambda _:quote_refresh())
+        def choose_kit(_=None):
+            amount.delete(0,tk.END);amount.insert(0,kit.get());quote_refresh()
+        kit.bind('<<ComboboxSelected>>',choose_kit)
         selected_variants={}
         def pick(_=None):
             nonlocal selected_variants
-            finish_key.set('brilhante')
             p=product_map.get(selector.get())
             if p:
+                kit.configure(values=p['kits'].split(','));kit.set(p['kits'].split(',')[0])
+                amount.delete(0,tk.END);amount.insert(0,kit.get())
                 selections=self.ask_variants(win,p)
                 if selections is None:
                     selector.set('Personalizado / avulso')
                     desc.delete(0,tk.END);price.delete(0,tk.END);selected_variants={}
                     return
                 selected_variants=selections
+                selected_variants.update(self.store.choices(p['id']))
                 desc.delete(0,tk.END);desc.insert(0,p['name'])
                 suggested,_=self.store.suggested(p)
                 val=p['table_cents'] if p['table_cents'] is not None else suggested
@@ -1163,7 +1004,7 @@ class ERP(PurchaseUI):
                 finish_summary.set('Item antigo: custo histórico não registrado.');return
             sale=item['unit_cents'] or 0
             margin=(sale-cost)/sale*100 if sale else 0
-            finish_summary.set(f"Item salvo • {item.get('finish_name') or 'Sem acabamento'} • Custo/un.: {money(round(cost))} • Margem bruta: {margin:.1f}%")
+            finish_summary.set(f"Item salvo • Custo/un.: {money(round(cost))} • Margem bruta: {margin:.1f}%")
         tree.bind('<<TreeviewSelect>>',show_saved_cost)
         paid_var.trace_add('write',lambda *_:redraw())
         redraw()
@@ -1184,7 +1025,7 @@ class ERP(PurchaseUI):
                                   qty=quantity(amount.get()),unit_cents=cents(price.get()),
                                   variants=dict(selected_variants) if p else {},**finishing))
                 redraw();selector.set('Personalizado / avulso');desc.delete(0,tk.END);price.delete(0,tk.END)
-                selected_variants={};amount.delete(0,tk.END);amount.insert(0,'1');finish_key.set('brilhante');quote_refresh()
+                selected_variants={};amount.delete(0,tk.END);amount.insert(0,'1');quote_refresh()
             except ValueError as exc:self.fail(exc,win)
         button(actions,'Adicionar item',add,False).pack(side='left',padx=4)
         def change_variants():
@@ -1201,31 +1042,16 @@ class ERP(PurchaseUI):
                 return
             updated=self.ask_variants(win,product)
             if updated is not None:
-                item['variants']=updated
+                updated.update(self.store.choices(product['id']))
+                try:q=self.store.order_quote(product['id'],int(item['qty']),item.get('stock_source','production'),updated)
+                except ValueError as exc:self.fail(exc,win);return
+                item.update(q);item['variants']=updated
+                for key in ('finish_key','finish_name','finish_source_id','finish_material_id'):item[key]=None
                 redraw()
         button(actions,'Trocar variações',change_variants,False).pack(side='left',padx=4)
         def remove():
             if tree.selection():items.pop(int(tree.selection()[0]));redraw()
         button(actions,'Remover item',remove,False).pack(side='left',padx=4)
-        def edit_finish():
-            if not tree.selection():return
-            item=items[int(tree.selection()[0])]
-            if not item.get('product_id'):
-                self.fail(ValueError('Escolha um produto cadastrado.'),win);return
-            popup=self.modal('Alterar acabamento do item',500,270)
-            popup.transient(win)
-            choice=tk.StringVar(value=item.get('finish_key') or 'brilhante')
-            for key,label in [('brilhante','Brilhante'),('fosco','Fosco Anti-risco'),('holografico','Holográfico')]:
-                tk.Radiobutton(popup,text=label,variable=choice,value=key,bg=SURFACE).pack(anchor='w',padx=25)
-            def apply():
-                try:q=self.store.finish_quote(item['product_id'],choice.get())
-                except ValueError as exc:self.fail(exc,popup);return
-                item.update(q);popup.destroy();win.grab_set();redraw()
-            button(popup,'Recalcular e aplicar',apply).pack(pady=10)
-            popup.wait_window()
-            if win.winfo_exists():win.grab_set()
-        button(actions,'Acabamento',edit_finish,False).pack(side='left',padx=4)
-
         tk.Label(content,text='OBSERVAÇÕES / PERSONALIZAÇÃO',bg=SURFACE,fg=OLIVE,
                  font=(BODY,9,'bold')).pack(anchor='w',padx=26,pady=(8,2))
         notes=tk.Text(content,height=3,font=(BODY,10),wrap='word',bd=1,relief='solid',highlightthickness=0)
@@ -1234,7 +1060,11 @@ class ERP(PurchaseUI):
         if o:button(foot,'Gerar PDF',lambda:self.export(o['id'],win),False).pack(side='left')
         def save():
             try:
-                id=self.store.save_order(id=o['id'] if o else None,customer=customer.get(),
+                cid=customer_map.get(customer.get())
+                if cid is None:
+                    cid=new_customer()
+                    if cid is None:return
+                id=self.store.save_order(id=o['id'] if o else None,customer=customer.get(),customer_id=cid,
                   due_date=parse_date(due.get()),payment=payment.get(),production=production.get().strip() or 'Novo',
                   notes=notes.get('1.0',tk.END),items=items,
                   paid_cents=cents(paid_var.get()) if payment.get()=='Parcial' else 0)

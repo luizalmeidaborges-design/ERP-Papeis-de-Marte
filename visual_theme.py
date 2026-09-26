@@ -123,18 +123,22 @@ class StripedTreeview(ttk.Treeview):
 
     def _sort_key(self,iid):
         import re,unicodedata
-        value=unicodedata.normalize('NFKD',self.set(iid,self._sort_column)).casefold()
+        value=unicodedata.normalize('NFKD',self.item(iid,'text') if self._sort_column=='#0' else self.set(iid,self._sort_column)).casefold()
         value=''.join(c for c in value if not unicodedata.combining(c))
         return tuple((1,int(part)) if part.isdigit() else (0,part) for part in re.split(r'(\d+)',value))
 
     def _stripe(self):
         self._stripe_job=None
-        if self._sort_column is not None:
-            for index,iid in enumerate(sorted(self.get_children(),key=self._sort_key,reverse=self._sort_reverse)):
-                super().move(iid,'',index)
-        for index,iid in enumerate(self.get_children()):
-            tags=[t for t in self.item(iid,'tags') if t not in ('_even','_odd')]
-            self.item(iid,tags=tags+['_odd' if index%2 else '_even'])
+        def visit(parent=''):
+            children=list(self.get_children(parent))
+            if self._sort_column is not None:
+                children.sort(key=self._sort_key,reverse=self._sort_reverse)
+                for index,iid in enumerate(children):super(StripedTreeview,self).move(iid,parent,index)
+            for index,iid in enumerate(children):
+                tags=[t for t in self.item(iid,'tags') if t not in ('_even','_odd')]
+                self.item(iid,tags=tags+['_odd' if index%2 else '_even'])
+                visit(iid)
+        visit()
 
     def _set_hover(self,iid):
         if iid==self._hovered:return

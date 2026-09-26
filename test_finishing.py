@@ -86,9 +86,9 @@ class FinishTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.store.finish_quote(self.pid,'holografico')
         self.store.db.rollback()
 
-    def test_non_laminated_product_and_no_finish_in_product_definition(self):
+    def test_legacy_quotes_remain_readable_and_bopp_can_now_be_in_product(self):
         pid=self.store.save_product(name='Sem laminar',code='SEM',markup=2,table_cents=3000,recipe=[('PAP',1)])
         self.assertEqual(self.store.finish_quote(pid)['unit_cents'],3000)
         with self.assertRaises(ValueError):self.store.finish_quote(pid,'fosco')
-        with self.assertRaises(ValueError):
-            self.store.save_product(name='Incorreto',code='ERR',markup=2,table_cents=None,recipe=[('BOPFOS30',1)])
+        pid=self.store.save_product(name='Fosco',code='FOS',markup=2,table_cents=None,recipe=[('BOPFOS30',1)])
+        self.assertEqual(self.store.product_cost(pid)[0],200)

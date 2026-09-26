@@ -364,3 +364,83 @@ ordem crescente/decrescente, mantendo as linhas alternadas.
 
 Compile a versão 2.3.0 com compilar_windows.bat. Nenhuma Release é publicada
 automaticamente por estas alterações.
+
+## Build 2.4.0 — produtos por variação, kits, clientes e CSV
+
+Esta versão substitui a seção **Acabamento do item** por versões no cadastro de produtos. Os campos antigos permanecem no banco para preservar pedidos e PDFs históricos, mas não há seleção de acabamento em novos pedidos.
+
+### Insumos e opções
+
+- Categorias: **Produção** e **Embalagem**. Cadastros existentes começam em Produção; altere a categoria das embalagens.
+- Cada insumo tem uma lista expansível de **Opção → Variação**. Exemplo: `Wire-o 3/4 → Dourado` e `Wire-o 1/2 → Preto`. Não há limite de cinco linhas.
+- Cada variação pode ter seu próprio **valor da embalagem**. Em branco, usa o preço padrão do insumo. O divisor continua sendo a quantidade por embalagem/rolo.
+- O custo de um insumo sem variação definida é o maior entre as variações ativas. Ao fixar uma variação, vale seu preço específico.
+- Renomear uma opção mantém seu identificador e o histórico de estoque. Remover uma linha a inativa, sem apagar os movimentos anteriores.
+- Compras de variações com preço próprio atualizam somente esse preço; cores com preço compartilhado continuam seguindo o preço comum do insumo.
+
+### Produtos e composição
+
+- Duas listas de seleção: insumos de Produção e insumos de Embalagem. Cada seção tem sua árvore, quantidade, unidade, quantidade de folhas e custo.
+- Para trocar o BOPP, selecione um produto e use **Criar variação**. Informe código e identificação próprios, remova o BOPP antigo da cópia e adicione o novo. A composição do produto original não muda.
+- Opções de insumos com preços diferentes geram versões separadas ao salvar o produto. Essas versões têm código, composição, custo e estoque próprios. O produto base usa o maior custo quando a opção está indefinida. Variações já geradas são independentes: editar a composição do produto base não sobrescreve suas receitas.
+- As combinações são geradas para as opções de custo; a interface aceita mais de cinco opções. Para evitar criação acidental de milhares de produtos, há limite de 1.000 combinações por operação, com erro antes de gravar.
+- A tabela agrupa versões em árvore e apresenta a SOMA dos custos unitários e dos custos dos lotes dos produtos visíveis. Essas somas não representam valor de estoque.
+- A coluna **Folhas/lote** soma quantidades cuja unidade contém `folha` ou é `A4`. Use essas unidades para papéis e filmes medidos por folha.
+- Filtros de Insumos, Produtos, Clientes e Pedidos começam recolhidos e podem ser abertos pelo botão **Mostrar filtros**.
+
+### Rendimento, custo mínimo e kits
+
+O cadastro pergunta quantas peças a composição informada produz e quais quantidades são vendidas em kits, por exemplo `1, 6, 12, 50`. No pedido, selecionar um kit preenche a quantidade de peças; também é possível digitar outra quantidade inteira.
+
+Para a origem **Produzir**:
+
+```
+lotes = teto(quantidade_pedida / rendimento)
+custo_total = custo_da_composição × lotes
+custo_por_peça_do_pedido = custo_total / quantidade_pedida
+preço_sugerido_por_peça = arredondar(custo_total × multiplicador / quantidade_pedida)
+```
+
+Se houver preço mínimo por peça, a sugestão usa o maior entre ele e o cálculo acima. O preço pode ser alterado manualmente no pedido, com recálculo da margem. O arredondamento do preço unitário em centavos pode gerar diferença de alguns centavos no total de kits.
+
+Exemplo: composição de R$ 6,00 rende 6 marca-páginas, multiplicador 2:
+
+| Pedido | Lotes | Custo total | Venda sugerida total | Sobra em estoque |
+|---|---:|---:|---:|---:|
+| 1 peça | 1 | R$ 6,00 | R$ 12,00 | 5 |
+| 6 peças | 1 | R$ 6,00 | R$ 12,00 | 0 |
+| 12 peças | 2 | R$ 12,00 | R$ 24,00 | 0 |
+
+O estoque é movimentado ao salvar o pedido, como nas versões anteriores. A origem Produzir desconta os insumos para lotes completos e registra as sobras como produtos prontos. Se a produção ainda não foi realizada fisicamente, os saldos representam a movimentação prevista do pedido cadastrado.
+
+### Estoque de produtos
+
+A aba Estoque apresenta uma seção de produtos prontos, com saldo, valor parado, entrada, retirada, ajuste e histórico. Na origem **Estoque pronto**, o pedido retira somente produtos; não desconta insumos novamente. A venda é bloqueada se não houver saldo suficiente.
+
+Editar ou excluir um pedido estorna os movimentos correspondentes. Uma produção cuja sobra já foi retirada por outro pedido não pode ser excluída antes de estornar essa retirada. Pedidos antigos mantêm o modelo de consumo anterior e os preços históricos; a migração não lança uma nova baixa para eles.
+
+O valor de estoque parado do relatório passa a incluir insumos e produtos prontos, calculados pelos custos atuais. Não é um cálculo de valor de mercado ou de recebimentos.
+
+### Clientes
+
+Nova aba **Clientes**, com nome, telefone, e-mail, data de nascimento e endereço. No pedido, selecione um cliente ou use `+` para cadastrar. Ao salvar sem cliente selecionado, o cadastro é aberto. Pedidos antigos continuam com seu nome histórico; ao editar um deles sem vínculo, o cadastro pode ser criado a partir desse nome.
+
+### Importação de produtos
+
+Em Produtos, o ícone **⇩** ao lado de Ativar / inativar oferece **Importar CSV** e **Baixar modelo CSV**. O arquivo `modelo_produtos.csv` também está na raiz do repositório.
+
+- Uma linha por produto; mantenha todos os cabeçalhos do modelo.
+- Salve preferencialmente como CSV UTF-8 separado por ponto e vírgula. São aceitos CSV com vírgula e arquivos Windows-1252.
+- `nome`, `codigo`, `rendimento`, `multiplicador`, `kits` e `insumos` são obrigatórios. Tamanho, gramatura, preço mínimo e variações fixas podem ficar vazios.
+- `insumos`: `CODIGO_PAPEL=1|CODIGO_EMBALAGEM=6`. Os códigos precisam existir e estar ativos.
+- `kits`: `1|6|12`.
+- `variacoes`: opcional, por exemplo `WIR=Wire-o 3/4 · Dourado`. Use exatamente o rótulo cadastrado; o insumo deve pertencer à composição.
+- Nome ou código duplicado, informação obrigatória ausente, quantidade inválida, insumo ou variação incompatível são sinalizados antes da importação.
+- **Corrigir selecionado** altera só aquela linha da revisão. **Ignorar incompatíveis e importar** grava apenas linhas válidas. O aviso final informa `X produtos adicionados` (incluindo versões de custo geradas) e quantas linhas foram ignoradas.
+- A linha de exemplo do modelo deve ser substituída pelos dados reais; seus códigos de insumos são ilustrativos.
+
+### Compilar
+
+Baixe o código atualizado completo e execute `compilar_windows.bat` no Windows. Os módulos `catalog_core.py` e `catalog_ui.py` são incluídos automaticamente pelo PyInstaller. A versão interna é **2.4.0**. Esta alteração de código não dispara uma compilação ou publicação de Release; `release-version.txt` permanece inalterado.
+
+Validação automatizada: 53 testes, cobrindo migração, históricos, lotes, kits, preços de variações, estornos, saldo de produtos, clientes, compras e importação CSV. A interface e o EXE precisam de validação visual no Windows.

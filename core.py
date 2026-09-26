@@ -114,7 +114,10 @@ def filter_orders(orders, filters):
 from purchasing import Purchasing
 
 
-class Store(Purchasing):
+from finishing import Finishing
+
+
+class Store(Purchasing,Finishing):
     def __init__(self, path: str | Path, initial_workbook: str | Path | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,6 +182,7 @@ class Store(Purchasing):
         """)
         self.migrate_schema()
         self.init_purchases()
+        self.init_finishing()
         if initial_workbook is not None and not self.db.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
             self.import_workbook(initial_workbook)
 
@@ -325,6 +329,10 @@ class Store(Purchasing):
             raise ValueError('O rendimento deve ser um número inteiro entre 1 e 1000000.')
         if not recipe:
             raise ValueError("Adicione ao menos um insumo à composição.")
+        finishing_codes={r['code'].casefold():r['key'] for r in self.finishes()}
+        choices={finishing_codes[c.casefold()] for c,q in recipe if c.casefold() in finishing_codes}
+        if choices-{'brilhante'}:
+            raise ValueError('Na composição use apenas o BOPP Brilhante padrão. Escolha os demais acabamentos no pedido.')
         with self.db:
             if id:
                 self.db.execute("UPDATE products SET code=?,name=?,size=?,grammage=?,markup=?,table_cents=? WHERE id=?",
@@ -420,7 +428,7 @@ class Store(Purchasing):
             paid_cents=0
         old_items=list(self.items(id)) if id else []
         def signature(rows):
-            return Counter((r['product_id'],round(float(r['qty']),8),
+            return Counter((r['product_id'],round(float(r['qty']),8),r.get('finish_source_id'),r.get('finish_material_id'),
                             tuple(sorted((int(k),int(v)) for k,v in (r.get('variants') or {}).items()))) for r in rows)
         stock_change = not id or signature(old_items)!=signature(items)
         usage=defaultdict(float)
@@ -438,6 +446,10 @@ class Store(Purchasing):
                 for r in recipe:
                     material=self.one('SELECT id FROM materials WHERE code=? COLLATE NOCASE',(r['material_code'],))
                     material_id=material['id']
+                    if item.get('finish_material_id') and material_id==item.get('finish_source_id'):
+                        material_id=item['finish_material_id']
+                        if not self.one('SELECT 1 FROM materials WHERE id=?',(material_id,)):
+                            raise ValueError('Insumo do acabamento não encontrado.')
                     variant_id=selections.get(material_id)
                     options=self.variants(material_id,active_only=True)
                     if self.variants(material_id) and not options and variant_id is None:
@@ -462,6 +474,8 @@ class Store(Purchasing):
             for item in items:
                 item_id=self.db.execute("INSERT INTO order_items(order_id,product_id,description,qty,unit_cents) VALUES(?,?,?,?,?)",
                                         (id,item.get('product_id'),item['description'].strip(),item['qty'],item['unit_cents'])).lastrowid
+                self.db.execute('''UPDATE order_items SET finish_key=?,finish_name=?,finish_source_id=?,finish_material_id=?,cost_unit_cents=? WHERE id=?''',
+                    tuple(item.get(k) for k in ('finish_key','finish_name','finish_source_id','finish_material_id','cost_unit_cents'))+(item_id,))
                 for material_id,variant_id in (item.get('variants') or {}).items():
                     self.db.execute('INSERT INTO order_item_variants(item_id,material_id,variant_id) VALUES(?,?,?)',
                                     (item_id,int(material_id),int(variant_id)))
@@ -716,16 +730,18 @@ def export_order_pdf(store: Store, order_id: int, destination: str | Path):
     total=0; unknown=False
     for item in items:
         variants='; '.join(store.variant_labels(item.get('variants')))
-        desc=item['description']+(f'  |  {variants}' if variants else '')
+        finish=item.get('finish_name')
+        desc=item['description']+(f' | Acabamento: {finish}' if finish else '')+(f'  |  {variants}' if variants else '')
         nlines=max(1, (len(desc)+37)//38)
         if y-nlines*15 < 90:
             footer();cv.showPage();header();y=table_head(height-160)
         cv.setFont(font,9)
+        row_y=y
         y=line(desc,48,y,235)
-        cv.drawRightString(375,y+14*nlines,fmt_qty(item['qty']))
-        cv.drawRightString(460,y+14*nlines,money(item['unit_cents']))
+        cv.drawRightString(375,row_y,fmt_qty(item['qty']))
+        cv.drawRightString(460,row_y,money(item['unit_cents']))
         line_total=round(item['qty']*item['unit_cents']) if item['unit_cents'] is not None else None
-        cv.drawRightString(width-48,y+14*nlines,money(line_total))
+        cv.drawRightString(width-48,row_y,money(line_total))
         if line_total is None:unknown=True
         else:total+=line_total
         cv.setStrokeColor(colors.HexColor('#EAD9CC'));cv.line(38,y-3,width-38,y-3)

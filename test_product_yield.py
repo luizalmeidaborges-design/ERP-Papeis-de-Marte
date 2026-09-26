@@ -58,6 +58,8 @@ class ProductYieldTests(unittest.TestCase):
     def test_yield_survives_restart_and_legacy_defaults_to_one(self):
         self.store.close();self.store=Store(self.path)
         self.assertEqual(self.store.products()[0]['base_yield'],5)
+        for row in self.store.all("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'pricing_%'"):
+            self.store.db.execute('DROP TRIGGER '+row['name'])
         self.store.db.execute('ALTER TABLE products DROP COLUMN base_yield')
         self.store.db.commit()
         self.store.close();self.store=Store(self.path)

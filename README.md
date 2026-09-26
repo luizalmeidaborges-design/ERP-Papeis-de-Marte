@@ -319,3 +319,48 @@ quantidades de um pedido, o ERP estorna a baixa anterior e aplica a composição
 e o rendimento atuais. Excluir o pedido estorna a quantidade efetivamente baixada.
 
 Compile com compilar_windows.bat. Versão preparada: 2.2.0.
+
+## Build 2.3.0 — acabamentos no pedido
+
+Ao abrir o ERP pela primeira vez nesta versão, são criados os insumos BOPP
+Brilhante 30μ, Fosco Anti-risco 30μ e Holográfico 30μ, por folha A4. Os preços
+começam não configurados (zero); o orçamento com acabamento exige custo positivo.
+Em **Insumos → Acabamentos**, vincule um insumo diferente a cada acabamento.
+Se as receitas antigas já usam um BOPP genérico, vincule esse insumo ao Brilhante
+para reconhecê-lo como padrão sem modificar as receitas existentes.
+
+Informe o total pago pelo rolo/embalagem e quantas folhas A4 úteis ele rende.
+Um rolo de 50 m não determina sozinho o número de folhas: largura e perdas
+precisam ser consideradas. O custo por A4 é valor da embalagem dividido pelo
+rendimento em folhas. Esse rendimento da embalagem é independente do rendimento
+do produto base. A configuração não altera saldos; registre entradas em Compras
+ou Estoque.
+
+Os adicionais iniciais por peça são R$ 0,00 (Brilhante), R$ 3,00 (Fosco) e
+R$ 5,00 (Holográfico), editáveis nessa tela. Brilhante mantém adicional zero.
+Na composição do produto use somente o BOPP padrão. O acabamento escolhido
+fica no item do pedido; a receita original permanece inalterada.
+
+O cálculo é: substituir o custo do BOPP na proporção utilizada, dividir a
+composição pelo rendimento, aplicar o multiplicador e somar o adicional por
+peça. Para produtos laminados, essa fórmula define a sugestão no pedido mesmo
+quando existe preço de tabela. O operador pode ajustar o preço de venda; a
+margem bruta exibida considera esse preço. Margem = (venda − custo) ÷ venda.
+Custo e acabamento ficam registrados no item; mudanças de preço posteriores
+não recalculam itens antigos. O botão Acabamento permite recalcular um item
+selecionado. A baixa usa o BOPP escolhido e a exclusão estorna o material usado.
+
+O resumo do produto mostra quatro linhas: custo do produto base, rendimento,
+custo por unidade e preço sugerido. O banco armazena os custos base/unitário,
+rendimento, multiplicador e sugerido, mantendo os campos calculados atualizados
+por gatilhos quando composição, rendimento ou preço dos insumos mudam.
+Exemplo: R$ 13,64 ÷ 5 = R$ 2,728 → exibido R$ 2,73; × 1,8 → R$ 4,91.
+Não se arredonda o custo antes de multiplicar. Tamanhos comerciais de kits
+não foram criados; a quantidade no pedido continua sendo o número de peças.
+
+Insumos inativos ficam ocultos por padrão. Para desarquivar, filtre Estado por
+Inativo e use Ativar / inativar. Clicar no cabeçalho de qualquer tabela alterna
+ordem crescente/decrescente, mantendo as linhas alternadas.
+
+Compile a versão 2.3.0 com compilar_windows.bat. Nenhuma Release é publicada
+automaticamente por estas alterações.

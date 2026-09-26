@@ -81,6 +81,8 @@ class StripedTreeview(ttk.Treeview):
         super().__init__(*args,**kwargs)
         self._stripe_job=None
         self._hovered=''
+        self._sort_column=None
+        self._sort_reverse=False
         self.tag_configure('_hover',background='#E1C699')
         self.tag_configure('_even',background=SURFACE)
         self.tag_configure('_odd',background='#E8DECE')
@@ -109,8 +111,27 @@ class StripedTreeview(ttk.Treeview):
         super().move(*args)
         self._queue_stripes()
 
+    def heading(self,column,option=None,**kwargs):
+        if 'text' in kwargs and 'command' not in kwargs:
+            kwargs['command']=lambda:self.sort_by(column)
+        return super().heading(column,option,**kwargs)
+
+    def sort_by(self,column):
+        self._sort_reverse=not self._sort_reverse if self._sort_column==column else False
+        self._sort_column=column
+        self._queue_stripes()
+
+    def _sort_key(self,iid):
+        import re,unicodedata
+        value=unicodedata.normalize('NFKD',self.set(iid,self._sort_column)).casefold()
+        value=''.join(c for c in value if not unicodedata.combining(c))
+        return tuple((1,int(part)) if part.isdigit() else (0,part) for part in re.split(r'(\d+)',value))
+
     def _stripe(self):
         self._stripe_job=None
+        if self._sort_column is not None:
+            for index,iid in enumerate(sorted(self.get_children(),key=self._sort_key,reverse=self._sort_reverse)):
+                super().move(iid,'',index)
         for index,iid in enumerate(self.get_children()):
             tags=[t for t in self.item(iid,'tags') if t not in ('_even','_odd')]
             self.item(iid,tags=tags+['_odd' if index%2 else '_even'])

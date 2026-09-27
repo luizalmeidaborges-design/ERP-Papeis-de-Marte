@@ -69,7 +69,8 @@ class ResetTests(unittest.TestCase):
 
     def test_sql_failure_rolls_back_all_deletions_and_marker(self):
         self.seed()
-        with sqlite3.connect(self.path) as db:
+        # The SQLite context manager does not close the file handle on Windows.
+        with closing(sqlite3.connect(self.path)) as db:
             db.execute("CREATE TRIGGER prevent_reset BEFORE DELETE ON orders BEGIN SELECT RAISE(ABORT,'blocked'); END")
         with self.assertRaises(sqlite3.IntegrityError):prepare_database(self.path)
         s=Store(self.path)

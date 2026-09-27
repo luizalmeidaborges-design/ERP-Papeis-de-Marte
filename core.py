@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import math
+import re
 import sqlite3
 import sys
 import unicodedata
@@ -129,6 +130,11 @@ class Store(Purchasing):
             pack_qty REAL NOT NULL CHECK(pack_qty > 0), unit TEXT NOT NULL DEFAULT 'un',
             pack_cents INTEGER NOT NULL CHECK(pack_cents >= 0), active INTEGER NOT NULL DEFAULT 1
           );
+          CREATE TABLE IF NOT EXISTS customers (
+            id INTEGER PRIMARY KEY, name TEXT NOT NULL,
+            phone TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '',
+            birthday TEXT NOT NULL DEFAULT '', address TEXT NOT NULL DEFAULT ''
+          );
           CREATE TABLE IF NOT EXISTS material_variants (
             id INTEGER PRIMARY KEY, material_id INTEGER NOT NULL REFERENCES materials(id),
             name TEXT NOT NULL COLLATE NOCASE, active INTEGER NOT NULL DEFAULT 1,
@@ -190,6 +196,8 @@ class Store(Purchasing):
                 self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
             product_columns={r['name'] for r in self.all('PRAGMA table_info(products)')}
+            if 'category' not in material_columns:
+                self.db.execute("ALTER TABLE materials ADD COLUMN category TEXT NOT NULL DEFAULT 'Produção' CHECK(category IN ('Produção','Embalagem'))")
             if 'base_yield' not in product_columns:
                 self.db.execute('ALTER TABLE products ADD COLUMN base_yield INTEGER NOT NULL DEFAULT 1 CHECK(base_yield>0)')
             if 'price_date' not in material_columns:
@@ -217,6 +225,28 @@ class Store(Purchasing):
 
     def one(self, query, params=()):
         return self.db.execute(query, params).fetchone()
+
+    def customers(self):
+        return self.all('SELECT * FROM customers ORDER BY name COLLATE NOCASE,id')
+
+    def save_customer(self, *, id=None, name, phone='', email='', birthday='', address=''):
+        name,phone,email,birthday,address=(v.strip() for v in (name,phone,email,birthday,address))
+        if not name:raise ValueError('Informe o nome do cliente.')
+        if email and not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+',email):
+            raise ValueError('Informe um e-mail válido ou deixe o campo vazio.')
+        if birthday:
+            try:born=date.fromisoformat(birthday)
+            except ValueError:raise ValueError('Data de nascimento inválida.')
+            if born>date.today():raise ValueError('A data de nascimento não pode ser futura.')
+        with self.db:
+            values=(name,phone,email,birthday,address)
+            if id is None:
+                id=self.db.execute('INSERT INTO customers(name,phone,email,birthday,address) VALUES(?,?,?,?,?)',values).lastrowid
+            else:
+                if not self.one('SELECT 1 FROM customers WHERE id=?',(id,)):
+                    raise ValueError('Cliente não encontrado.')
+                self.db.execute('UPDATE customers SET name=?,phone=?,email=?,birthday=?,address=? WHERE id=?',values+(id,))
+        return id
 
     def materials(self):
         return self.all("SELECT * FROM materials ORDER BY active DESC, name COLLATE NOCASE, code")
@@ -246,7 +276,7 @@ class Store(Purchasing):
             if row:labels.append(f"{row['material']}: {row['variant']}")
         return labels
 
-    def save_material(self, *, id=None, name, size='', grammage='', specification='', pack_qty, unit, pack_cents, code=None, variants=None, price_date=None):
+    def save_material(self, *, id=None, name, size='', grammage='', specification='', pack_qty, unit, pack_cents, code=None, variants=None, price_date=None, category=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name:
@@ -256,6 +286,8 @@ class Store(Purchasing):
         if price_date:
             try:date.fromisoformat(price_date)
             except ValueError:raise ValueError('Informe uma data válida para o preço.')
+        if category is not None and category not in ('Produção','Embalagem'):
+            raise ValueError('Selecione Produção ou Embalagem para a categoria do insumo.')
         if variants is not None:
             cleaned=[v.strip() for v in variants if v.strip()]
             if len({v.casefold() for v in cleaned}) != len(cleaned):
@@ -273,6 +305,8 @@ class Store(Purchasing):
             else:
                 id=self.db.execute("INSERT INTO materials(code,name,size,grammage,specification,pack_qty,unit,pack_cents) VALUES(?,?,?,?,?,?,?,?)",
                                    (code,name,size,grammage,specification.strip(),pack_qty,unit.strip() or 'un',pack_cents)).lastrowid
+            if category is not None:
+                self.db.execute('UPDATE materials SET category=? WHERE id=?',(category,id))
             if price_date is not None:
                 self.db.execute('UPDATE materials SET price_date=? WHERE id=?',(price_date,id))
             if variants is not None:
@@ -294,7 +328,7 @@ class Store(Purchasing):
         return self.all("SELECT * FROM products ORDER BY active DESC, name COLLATE NOCASE")
 
     def recipe(self, product_id):
-        return self.all("""SELECT r.*, m.name AS material_name, m.pack_qty, m.pack_cents, m.unit
+        return self.all("""SELECT r.*, m.name AS material_name, m.pack_qty, m.pack_cents, m.unit, m.category
            FROM recipes r LEFT JOIN materials m ON m.code=r.material_code COLLATE NOCASE
            WHERE r.product_id=? ORDER BY r.position""", (product_id,))
 
@@ -853,3 +887,4 @@ def export_report_pdf(data: dict, destination: str | Path):
               money(round(r['total_cents'])) if not r['unpriced'] else 'A definir') for r in data['orders']],
             [55,115,70,80,105,available-425])
     pdf.build(story,onFirstPage=header,onLaterPages=header)
+

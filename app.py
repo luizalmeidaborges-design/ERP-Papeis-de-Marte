@@ -287,7 +287,7 @@ class ERP(PurchaseUI):
                  font=(HEADING,14,'bold')).pack(pady=(3,2))
         tk.Label(side,text='Thayna Donadei',bg=OLIVE,fg='#E8CDA7',
                  font=(BODY,9)).pack(pady=(0,16))
-        for name,icon in [('Papéis de Marte','⌂'),('Insumos','◈'),('Produtos','▦'),('Pedidos','▤'),
+        for name,icon in [('Papéis de Marte','⌂'),('Insumos','◈'),('Produtos','▦'),('Clientes','♙'),('Pedidos','▤'),
                           ('Calendário','▦'),('Estoque','◉'),('Compras','▤'),('Relatórios','▥')]:
             nav=tk.Button(side,text=f'  {icon}    {name}',anchor='w',command=lambda n=name:self.navigate(n),
                       bg=OLIVE,fg='white',activebackground='#686344',activeforeground='white',
@@ -330,6 +330,7 @@ class ERP(PurchaseUI):
         if self.page=='Papéis de Marte':self.home()
         elif self.page=='Insumos':self.material_page()
         elif self.page=='Produtos':self.product_page()
+        elif self.page=='Clientes':self.customer_page()
         elif self.page=='Pedidos':self.order_page()
         elif self.page=='Calendário':self.calendar_page()
         elif self.page=='Estoque':self.stock_page()
@@ -394,15 +395,15 @@ class ERP(PurchaseUI):
         filters=tk.Frame(self.main,bg=BG);filters.pack(fill='x',padx=26,pady=5)
         variables={}
         for i,(key,label) in enumerate((('name','Nome / código'),('size','Tamanho'),
-                                       ('grammage','Gramatura'),('variant','Variação'),('state','Estado'))):
+                                       ('grammage','Gramatura'),('variant','Variação'),('category','Categoria'),('state','Estado'))):
             filters.grid_columnconfigure(i,weight=1)
             tk.Label(filters,text=label,bg=BG,fg=MUTED).grid(row=0,column=i,sticky='w',padx=3)
             var=tk.StringVar(value=self.material_filters.get(key,''));variables[key]=var
-            entry=(ttk.Combobox(filters,textvariable=var,values=('','Ativo','Inativo'),state='readonly',width=10)
-                   if key=='state' else ttk.Entry(filters,textvariable=var,width=14))
+            entry=(ttk.Combobox(filters,textvariable=var,values=('','Ativo','Inativo') if key=='state' else ('','Produção','Embalagem'),state='readonly',width=12)
+                   if key in ('state','category') else ttk.Entry(filters,textvariable=var,width=14))
             entry.grid(row=1,column=i,sticky='ew',padx=3)
-        self.tree=grid(self.main,('Código','Insumo','Tamanho','Gramatura','Variações','Embalagem','Preço','Custo/un.','Estado','Data do preço'),
-                       (110,155,75,75,165,100,95,100,70,110))
+        self.tree=grid(self.main,('Código','Insumo','Categoria','Tamanho','Gramatura','Variações','Embalagem','Preço','Custo/un.','Estado','Data do preço'),
+                       (110,155,95,75,75,165,100,95,100,70,110))
         def populate(*_):
             self.material_filters={key:var.get() for key,var in variables.items()}
             self.tree.delete(*self.tree.get_children())
@@ -410,17 +411,17 @@ class ERP(PurchaseUI):
                 names=', '.join(v['name'] for v in self.store.variants(m['id'],active_only=True))
                 state='Ativo' if m['active'] else 'Inativo'
                 values={'name':m['code']+' '+m['name'],'size':m['size'],
-                        'grammage':m['grammage'],'variant':names,'state':state}
+                        'grammage':m['grammage'],'variant':names,'category':m['category'],'state':state}
                 if any(value.strip().casefold() not in values[key].casefold()
                        for key,value in self.material_filters.items() if key!='state'):continue
                 if self.material_filters['state'] and self.material_filters['state']!=state:continue
                 unit_cost=m['pack_cents']/m['pack_qty']
-                self.tree.insert('',tk.END,iid=str(m['id']),values=(m['code'],m['name'],m['size'],m['grammage'],names,
+                self.tree.insert('',tk.END,iid=str(m['id']),values=(m['code'],m['name'],m['category'],m['size'],m['grammage'],names,
                     fmt_qty(m['pack_qty'])+' '+m['unit'],money(m['pack_cents']),
                     f'R$ {unit_cost/100:.4f}'.replace('.',','),state,br_date(m['price_date'])))
         def clear():
             for var in variables.values():var.set('')
-        button(filters,'Limpar',clear,False).grid(row=1,column=5,padx=5)
+        button(filters,'Limpar',clear,False).grid(row=1,column=6,padx=5)
         for var in variables.values():var.trace_add('write',populate)
         populate()
         self.tree.bind('<Double-1>',lambda _:self.edit_material())
@@ -449,14 +450,17 @@ class ERP(PurchaseUI):
         if isinstance(exc,sqlite3.IntegrityError):text='Código já cadastrado. Nos produtos, informe outro código; nos insumos, revise nome, tamanho e gramatura.'
         messagebox.showerror('Não foi possível salvar',text,parent=win)
 
-    def material_dialog(self,m=None,parent=None,on_saved=None):
-        win=self.modal('Editar insumo' if m else 'Novo insumo',700,610)
+    def material_dialog(self,m=None,parent=None,on_saved=None,default_category='Produção'):
+        win=self.modal('Editar insumo' if m else 'Novo insumo',760,720)
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=26,pady=15)
+        area=ScrollArea(win,background=SURFACE,min_width=690,min_height=610)
+        area.pack(fill='both',expand=True);content=area.content
         if parent:
             win.transient(parent)
             def restore_grab(event):
                 if event.widget is win and parent.winfo_exists():parent.grab_set()
             win.bind('<Destroy>',restore_grab)
-        frame=tk.Frame(win,bg=SURFACE);frame.pack(fill='x',padx=16)
+        frame=tk.Frame(content,bg=SURFACE);frame.pack(fill='x',padx=16)
         frame.grid_columnconfigure(0,weight=1);frame.grid_columnconfigure(1,weight=1)
         name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
         name=field(frame,'NOME DO INSUMO',0,m['name'] if m else '',0,variable=name_var)
@@ -471,6 +475,10 @@ class ERP(PurchaseUI):
         variants=field(frame,'VARIAÇÕES POSSÍVEIS (SEPARADAS POR VÍRGULA)',8,variant_names,0,width=48)
         price_date=field(frame,'DATA DO PREÇO • DD/MM/AAAA',8,
                          br_date(m['price_date']) if m and m['price_date'] else ('' if m else date.today().strftime('%d/%m/%Y')),1)
+        tk.Label(frame,text='CATEGORIA',bg=SURFACE,fg=OLIVE,font=(BODY,9,'bold')).grid(row=10,column=0,sticky='w',padx=10,pady=(12,3))
+        category=ttk.Combobox(frame,values=('Produção','Embalagem'),state='readonly')
+        category.set(m['category'] if m else default_category)
+        category.grid(row=11,column=0,sticky='ew',padx=10)
         code.configure(state='readonly')
         def update_code(*_):
             if m:return
@@ -479,9 +487,9 @@ class ERP(PurchaseUI):
             code.configure(state='normal');code.delete(0,tk.END);code.insert(0,computed);code.configure(state='readonly')
         for variable in (name_var,size_var,gram_var):variable.trace_add('write',update_code)
         update_code()
-        tk.Label(win,text='Código: 3 caracteres do nome + tamanho + gramatura. Ex.: OFFA4150.',
+        tk.Label(content,text='Código: 3 caracteres do nome + tamanho + gramatura. Ex.: OFFA4150.',
                  bg=SURFACE,fg=MUTED,font=(BODY,9)).pack(anchor='w',padx=26,pady=(10,0))
-        tk.Label(win,text='Ex.: Dourado, Prata, Preto. Todas usam o mesmo preço do insumo.',
+        tk.Label(content,text='Ex.: Dourado, Prata, Preto. Todas usam o mesmo preço do insumo.',
                  bg=SURFACE,fg=MUTED,font=(BODY,9)).pack(anchor='w',padx=26,pady=(3,0))
         def save():
             try:
@@ -491,12 +499,56 @@ class ERP(PurchaseUI):
                 saved_id=self.store.save_material(id=m['id'] if m else None,code=m['code'] if m else None,name=name.get(),
                   size=size.get(),grammage=gram.get(),specification=spec.get(),unit=unit.get(),
                   pack_qty=quantity(qty.get()),pack_cents=cents(price.get()),
-                  variants=variants.get().split(','),price_date=reference)
+                  variants=variants.get().split(','),price_date=reference,category=category.get())
                 win.destroy()
                 if on_saved:on_saved(saved_id)
                 else:self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
-        button(win,'Salvar insumo',save).pack(side='right',padx=26,pady=25)
+        button(footer,'Salvar insumo',save).pack(side='right')
+
+    def customer_page(self):
+        self.toolbar('Cadastro de clientes.', [('Novo cliente',lambda:self.customer_dialog(),True),
+                     ('Editar',self.edit_customer,False)])
+        bar=tk.Frame(self.main,bg=BG);bar.pack(fill='x',padx=26,pady=4)
+        tk.Label(bar,text='Buscar:',bg=BG,fg=MUTED).pack(side='left')
+        search=tk.StringVar()
+        ttk.Entry(bar,textvariable=search,width=45).pack(side='left',padx=8)
+        self.tree=grid(self.main,('Nome','Telefone','E-mail','Nascimento','Endereço'),(210,140,230,110,320))
+        def populate(*_):
+            self.tree.delete(*self.tree.get_children())
+            term=search.get().strip().casefold()
+            for c in self.store.customers():
+                if term not in ' '.join((c['name'],c['phone'],c['email'],c['address'])).casefold():continue
+                self.tree.insert('',tk.END,iid=str(c['id']),values=(c['name'],c['phone'],c['email'],br_date(c['birthday']),c['address']))
+        search.trace_add('write',populate);populate()
+        self.tree.bind('<Double-1>',lambda _:self.edit_customer())
+
+    def edit_customer(self):
+        id=self.selection(self.tree)
+        if id:self.customer_dialog(self.store.one('SELECT * FROM customers WHERE id=?',(id,)))
+
+    def customer_dialog(self,c=None):
+        win=self.modal('Editar cliente' if c else 'Novo cliente',730,540)
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=25,pady=16)
+        area=ScrollArea(win,background=SURFACE,min_width=650,min_height=350)
+        area.pack(fill='both',expand=True)
+        body=tk.Frame(area.content,bg=SURFACE);body.pack(fill='x',padx=16)
+        for col in range(2):body.columnconfigure(col,weight=1)
+        name=field(body,'NOME *',0,c['name'] if c else '',0)
+        phone=field(body,'TELEFONE / NÚMERO',0,c['phone'] if c else '',1)
+        email=field(body,'E-MAIL',2,c['email'] if c else '',0)
+        born=field(body,'NASCIMENTO • DD/MM/AAAA',2,br_date(c['birthday']) if c else '',1)
+        address=field(body,'ENDEREÇO COMPLETO',4,c['address'] if c else '',0)
+        address.grid_configure(columnspan=2)
+        tk.Label(area.content,text='Somente o nome é obrigatório.',bg=SURFACE,fg=MUTED).pack(anchor='w',padx=26,pady=12)
+        def save():
+            try:
+                birthday=parse_date(born.get()) if born.get().strip() else ''
+                self.store.save_customer(id=c['id'] if c else None,name=name.get(),phone=phone.get(),email=email.get(),
+                                         birthday=birthday,address=address.get())
+                win.destroy();self.render()
+            except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
+        button(footer,'Salvar cliente',save).pack(side='right')
 
     def product_page(self):
         self.toolbar('Sugestão = custo dos insumos × multiplicador. Média = preço realizado por unidade.',
@@ -527,8 +579,14 @@ class ERP(PurchaseUI):
         if id:self.store.toggle_product(id);self.render()
 
     def product_dialog(self,p=None):
-        win=self.modal('Editar produto' if p else 'Novo produto',850,735)
-        body=tk.Frame(win,bg=SURFACE);body.pack(fill='x',padx=16)
+        win=self.modal('Editar produto' if p else 'Novo produto',1000,820)
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=24,pady=12)
+        total_label=tk.Label(footer,text='',bg=SURFACE,fg=RED,font=(BODY,11,'bold'),wraplength=820,justify='left')
+        total_label.pack(anchor='w',pady=(0,8))
+        buttons=tk.Frame(footer,bg=SURFACE);buttons.pack(fill='x')
+        area=ScrollArea(win,background=SURFACE,min_width=920,min_height=660)
+        area.pack(fill='both',expand=True);content=area.content
+        body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=16)
         for i in range(2):body.grid_columnconfigure(i,weight=1)
         name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
         name=field(body,'NOME DO PRODUTO',0,p['name'] if p else '',0,variable=name_var)
@@ -542,71 +600,73 @@ class ERP(PurchaseUI):
                        p['base_yield'] if p else '1',0,variable=yield_var)
         tk.Label(body,text='Ex.: 1 folha rende 5 peças → informe 5.\nNo pedido, a quantidade será de peças.',
                  bg=SURFACE,fg=MUTED,justify='left',font=(BODY,9)).grid(row=7,column=1,sticky='w',padx=10)
-        tk.Label(win,text='COMPOSIÇÃO • quantidade usada para produzir o produto base',bg=SURFACE,fg=OLIVE,
+        tk.Label(content,text='COMPOSIÇÃO • quantidade usada para produzir o produto base',bg=SURFACE,fg=OLIVE,
                  font=(BODY,10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
-        chooser=tk.Frame(win,bg=SURFACE);chooser.pack(fill='x',padx=20,pady=4)
-        materials=[m for m in self.store.materials() if m['active']]
-        mapping={f"{m['code']}  ·  {m['name']} ({m['size']} {m['grammage']})":m['code'] for m in materials}
-        combo=ttk.Combobox(chooser,values=list(mapping),state='normal',width=38)
-        combo.pack(side='left',padx=5,fill='x',expand=True)
-        def search_materials(event=None):
-            term=combo.get().strip().casefold()
-            combo.configure(values=[label for label in mapping if term in label.casefold()])
-        combo.bind('<KeyRelease>',search_materials)
-        def refresh_materials(saved_id):
-            mapping.clear()
-            for material in self.store.materials():
-                if not material['active']:continue
-                label=f"{material['code']}  ·  {material['name']} ({material['size']} {material['grammage']})"
-                mapping[label]=material['code']
-                if material['id']==saved_id:combo.set(label)
-            combo.configure(values=list(mapping))
-            win.grab_set()
-        button(chooser,'Novo insumo',lambda:self.material_dialog(parent=win,on_saved=refresh_materials),False).pack(side='left',padx=3)
-
-        unit_qty=ttk.Entry(chooser,width=12);unit_qty.insert(0,'1');unit_qty.pack(side='left',padx=5)
-        entries=[]
-        table_frame=tk.Frame(win,bg=SURFACE);table_frame.pack(fill='both',expand=True,padx=20,pady=5)
-        tree=StripedTreeview(table_frame,columns=('Insumo','Qtd','Custo'),show='headings',height=6)
-        for column,width in [('Insumo',420),('Qtd',90),('Custo',120)]:tree.heading(column,text=column);tree.column(column,width=width)
-        tree.pack(side='left',fill='both',expand=True)
-        scroll=ttk.Scrollbar(table_frame,orient='vertical',command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set)
-        total_label=tk.Label(win,text='',bg=SURFACE,fg=RED,font=(BODY,12,'bold'))
-        total_label.pack(anchor='e',padx=25,pady=4)
+        entries=[(r['material_code'],r['qty']) for r in self.store.recipe(p['id'])] if p else []
+        panels=tk.Frame(content,bg=SURFACE);panels.pack(fill='both',expand=True,padx=20,pady=5)
+        panels.columnconfigure(0,weight=1);panels.columnconfigure(1,weight=1);panels.rowconfigure(0,weight=1)
+        trees={};selectors={};mappings={}
         def redraw():
-            tree.delete(*tree.get_children());running=0;missing=[]
+            running=0;missing=[]
+            for tree in trees.values():tree.delete(*tree.get_children())
             for i,(material_code,amount) in enumerate(entries):
                 m=self.store.one('SELECT * FROM materials WHERE code=? COLLATE NOCASE',(material_code,))
                 value=amount*m['pack_cents']/m['pack_qty'] if m else None
                 if value is None:missing.append(material_code)
                 else:running+=value
-                tree.insert('',tk.END,iid=str(i),values=(f"{material_code} · {m['name']}" if m else material_code+' · NÃO ENCONTRADO',
+                category=m['category'] if m else 'Produção'
+                trees[category].insert('',tk.END,iid=str(i),values=(f"{material_code} · {m['name']}" if m else material_code+' · NÃO ENCONTRADO',
                                                          fmt_qty(amount),money(round(value)) if value is not None else 'Revisar'))
             try:factor=float(markup.get().replace(',','.'))
             except ValueError:factor=1.8
             try:
                 count=int(produced.get())
-                if count<1:raise ValueError()
+                if count<1 or not math.isfinite(factor):raise ValueError()
             except ValueError:
-                total_label.configure(text='Informe um rendimento inteiro maior que zero.');return
+                total_label.configure(text='Informe rendimento inteiro maior que zero e multiplicador válido.');return
             total_label.configure(text=('Corrija os insumos: '+', '.join(missing)) if missing else
                 f'Base ({count} un.): {money(round(running))} • Custo/un.: {money(round(running/count))} • Sugerido/un.: {money(round(running/count*factor))}')
+        def refresh_materials(saved_id=None):
+            for category in mappings:mappings[category].clear()
+            for m in self.store.materials():
+                if not m['active']:continue
+                label=f"{m['code']} · {m['name']} ({m['size']} {m['grammage']})"
+                mappings[m['category']][label]=m['code']
+                if m['id']==saved_id:selectors[m['category']].set(label)
+            for category,combo in selectors.items():combo.configure(values=list(mappings[category]))
+            if saved_id is not None:win.grab_set();redraw()
+        for col,category in enumerate(('Produção','Embalagem')):
+            panel=tk.LabelFrame(panels,text=category,bg=SURFACE,fg=OLIVE,font=(BODY,11,'bold'))
+            panel.grid(row=0,column=col,sticky='nsew',padx=5)
+            combo=ttk.Combobox(panel,state='normal',width=38);combo.pack(fill='x',padx=8,pady=8)
+            selectors[category]=combo;mappings[category]={}
+            def search(_=None,c=category):
+                term=selectors[c].get().strip().casefold()
+                selectors[c].configure(values=[label for label in mappings[c] if term in label.casefold()])
+            combo.bind('<KeyRelease>',search)
+            row=tk.Frame(panel,bg=SURFACE);row.pack(fill='x',padx=8,pady=(0,5))
+            tk.Label(row,text='Qtd:',bg=SURFACE,fg=MUTED).pack(side='left')
+            qty=ttk.Entry(row,width=7);qty.insert(0,'1');qty.pack(side='left',padx=5)
+            def add(c=category,q=qty):
+                try:
+                    label=selectors[c].get()
+                    if label not in mappings[c]:raise ValueError('Busque e selecione um insumo da categoria '+c+'.')
+                    entries.append((mappings[c][label],quantity(q.get())));redraw()
+                except ValueError as exc:self.fail(exc,win)
+            button(row,'Adicionar',add,False).pack(side='left',padx=3)
+            button(row,'Novo insumo',lambda c=category:self.material_dialog(parent=win,on_saved=refresh_materials,default_category=c),False).pack(side='left',padx=3)
+            box=tk.Frame(panel,bg=SURFACE);box.pack(fill='both',expand=True,padx=8,pady=5)
+            tree=StripedTreeview(box,columns=('Insumo','Qtd','Custo'),show='headings',height=5);trees[category]=tree
+            for column,width in [('Insumo',245),('Qtd',55),('Custo',105)]:tree.heading(column,text=column);tree.column(column,width=width,minwidth=45)
+            tree.pack(side='left',fill='both',expand=True)
+            scroll=ttk.Scrollbar(box,orient='vertical',command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set)
+            def remove(c=category):
+                selected=trees[c].selection()
+                if selected:entries.pop(int(selected[0]));redraw()
+            button(panel,'Remover selecionado',remove,False).pack(anchor='e',padx=8,pady=5)
+        refresh_materials();redraw()
         yield_var.trace_add('write',lambda *_:redraw())
         markup.bind('<KeyRelease>',lambda _:redraw())
-        def add():
-            try:
-                if combo.get() not in mapping:raise ValueError('Digite para buscar e selecione um insumo na lista.')
-                entries.append((mapping[combo.get()],quantity(unit_qty.get())))
-                redraw()
-            except (ValueError,KeyError) as exc:self.fail(exc,win)
-        button(chooser,'Adicionar',add,False).pack(side='left',padx=5)
-        if p:entries.extend((r['material_code'],r['qty']) for r in self.store.recipe(p['id']))
-        redraw()
-        def remove():
-            selected=tree.selection()
-            if selected:entries.pop(int(selected[0]));redraw()
-        buttons=tk.Frame(win,bg=SURFACE);buttons.pack(side='bottom',fill='x',padx=23,pady=(3,16),before=table_frame)
-        button(buttons,'Remover insumo selecionado',remove,False).pack(side='left')
         def save():
             try:
                 factor=float(markup.get().strip().replace(',','.'))
@@ -1184,3 +1244,4 @@ if __name__=='__main__':
     root.iconphoto(True,tk.PhotoImage(file=str(asset('logo.png'))))
     ERP(root)
     root.mainloop()
+

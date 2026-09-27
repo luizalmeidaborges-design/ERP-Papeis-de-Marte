@@ -319,3 +319,18 @@ quantidades de um pedido, o ERP estorna a baixa anterior e aplica a composição
 e o rendimento atuais. Excluir o pedido estorna a quantidade efetivamente baixada.
 
 Compile com compilar_windows.bat. Versão preparada: 2.2.0.
+
+
+## Build 2.2.1 — clientes e categorias de insumos
+
+Atualização sobre a base restaurada da build 2.2.0, com três alterações:
+
+- **Clientes:** nova aba para cadastrar, buscar e editar nome, telefone, e-mail, data de nascimento e endereço. Somente o nome é obrigatório.
+- **Insumos:** categoria Produção ou Embalagem no cadastro, na tabela e no filtro. Insumos de bases anteriores começam como Produção; edite os insumos de embalagem para classificá-los. A migração preserva os registros existentes.
+- **Produtos:** a composição apresenta duas listas, Produção e Embalagem, cada uma com seleção, adição e remoção de insumos da sua categoria. As duas listas compõem o mesmo produto e entram no mesmo cálculo de custo e rendimento. O formulário tem rolagem e mantém o botão Salvar visível.
+
+O fluxo de pedidos e as fórmulas de precificação e estoque são os da build 2.2.0. O cadastro de clientes é uma aba independente nesta atualização.
+
+Para compilar, baixe o projeto completo e execute `compilar_windows.bat`. Versão interna: 2.2.1. Este commit não publica uma Release nem altera `release-version.txt`.
+
+Verificação: 23 testes passaram; 10 testes de importação histórica foram ignorados porque exigem a planilha privada, que não está no repositório. Os novos testes cobrem clientes, migração, reclassificação de insumos e preservação do cálculo e do consumo de estoque. A interface ainda precisa de validação visual no Windows.

@@ -52,21 +52,17 @@ class Purchasing:
         with self.db:
             pid=self.db.execute('INSERT INTO purchases(purchase_date,supplier,notes,total_cents) VALUES(?,?,?,?)',
                 (today,supplier.strip(),notes.strip(),sum(row[3] for row in validated))).lastrowid
-            totals=defaultdict(lambda:[Decimal(0),0,None]);variant_totals=defaultdict(lambda:[Decimal(0),0,None])
+            totals=defaultdict(lambda:[Decimal(0),0,None])
             for material,variant,qty,paid,label in validated:
                 self.db.execute('''INSERT INTO purchase_items(purchase_id,material_id,variant_id,description,unit,qty,total_cents)
                     VALUES(?,?,?,?,?,?,?)''',(pid,material['id'],variant,label,material['unit'],qty,paid))
                 self._record_movement(material['id'],qty,'purchase',f'Compra OC{pid:05d}',variant_id=variant)
-                priced_variant=self.one('SELECT pack_cents FROM material_variants WHERE id=?',(variant,)) if variant else None
-                target=variant_totals[variant] if priced_variant and priced_variant['pack_cents'] is not None else totals[material['id']]
-                target[0]+=Decimal(str(qty));target[1]+=paid;target[2]=material
+                totals[material['id']][0]+=Decimal(str(qty))
+                totals[material['id']][1]+=paid
+                totals[material['id']][2]=material
             for mid,(qty,paid,material) in totals.items():
                 pack_price=int((Decimal(paid)*Decimal(str(material['pack_qty']))/qty).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
                 self.db.execute('UPDATE materials SET pack_cents=?,price_date=? WHERE id=?',(pack_price,today,mid))
-            for vid,(qty,paid,material) in variant_totals.items():
-                pack_price=int((Decimal(paid)*Decimal(str(material['pack_qty']))/qty).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
-                self.db.execute('UPDATE material_variants SET pack_cents=? WHERE id=?',(pack_price,vid))
-                self.db.execute('UPDATE materials SET price_date=? WHERE id=?',(today,material['id']))
         return pid
 
     def financial_summary(self, month=None, year=None):
@@ -83,8 +79,6 @@ class Purchasing:
         else:
             keys=sorted(monthly,reverse=True)
         rows=[dict(period=key,**monthly[key],balance=monthly[key]['sales']-monthly[key]['spent']) for key in keys]
-        material_value=round(sum(max(0,row['balance'])*self.material_price(row['id'],row['variant_id'])/row['pack_qty'] for row in self.stock()))
-        product_value=round(sum(max(0,p['balance'])*(p['cost_unit_cents'] or 0) for p in self.product_stock()))
-        stock_value=material_value+product_value
+        stock_value=round(sum(max(0,row['balance'])*row['pack_cents']/row['pack_qty'] for row in self.stock()))
         return {'rows':rows,'sales':sum(r['sales'] for r in rows),'spent':sum(r['spent'] for r in rows),
-                'balance':sum(r['balance'] for r in rows),'stock_value':stock_value,'material_stock_value':material_value,'product_stock_value':product_value}
+                'balance':sum(r['balance'] for r in rows),'stock_value':stock_value}

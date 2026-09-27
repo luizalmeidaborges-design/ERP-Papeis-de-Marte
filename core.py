@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import math
-import json
 import sqlite3
 import sys
 import unicodedata
@@ -115,13 +114,7 @@ def filter_orders(orders, filters):
 from purchasing import Purchasing
 
 
-from finishing import Finishing
-
-
-from catalog_core import Catalog, positive_int
-
-
-class Store(Catalog,Purchasing,Finishing):
+class Store(Purchasing):
     def __init__(self, path: str | Path, initial_workbook: str | Path | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -186,8 +179,6 @@ class Store(Catalog,Purchasing,Finishing):
         """)
         self.migrate_schema()
         self.init_purchases()
-        self.init_finishing()
-        self.init_catalog()
         if initial_workbook is not None and not self.db.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
             self.import_workbook(initial_workbook)
 
@@ -242,7 +233,7 @@ class Store(Catalog,Purchasing,Finishing):
             m=self.one('SELECT id,name,code FROM materials WHERE code=? COLLATE NOCASE',(part['material_code'],))
             if m and m['id'] not in seen:
                 options=self.variants(m['id'],active_only=True)
-                if options and m['id'] not in self.choices(product_id):result.append((m,options))
+                if options:result.append((m,options))
                 seen.add(m['id'])
         return result
 
@@ -255,7 +246,7 @@ class Store(Catalog,Purchasing,Finishing):
             if row:labels.append(f"{row['material']}: {row['variant']}")
         return labels
 
-    def save_material(self, *, id=None, name, size='', grammage='', specification='', pack_qty, unit, pack_cents, code=None, variants=None, price_date=None, category=None, variant_options=None):
+    def save_material(self, *, id=None, name, size='', grammage='', specification='', pack_qty, unit, pack_cents, code=None, variants=None, price_date=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name:
@@ -269,17 +260,7 @@ class Store(Catalog,Purchasing,Finishing):
             cleaned=[v.strip() for v in variants if v.strip()]
             if len({v.casefold() for v in cleaned}) != len(cleaned):
                 raise ValueError('Não repita nomes de variações do mesmo insumo.')
-        if category is not None and category not in ('Produção','Embalagem'):raise ValueError('Categoria inválida.')
-        if variant_options is not None:
-            variants=[]
-            for v in variant_options:
-                option=v['option'].strip();value=v['value'].strip()
-                if not option or not value:raise ValueError('Preencha a opção e a variação.')
-                if v.get('pack_cents') is not None and (not isinstance(v['pack_cents'],int) or v['pack_cents']<0):raise ValueError('Preço da variação inválido.')
-                variants.append(option+' · '+value)
-            cleaned=variants
-            if len({v.casefold() for v in variants})!=len(variants):raise ValueError('Opção / variação repetida.')
-        with self.atomic():
+        with self.db:
             if id:
                 old=self.one('SELECT code FROM materials WHERE id=?',(id,))
                 if old is None:
@@ -292,14 +273,8 @@ class Store(Catalog,Purchasing,Finishing):
             else:
                 id=self.db.execute("INSERT INTO materials(code,name,size,grammage,specification,pack_qty,unit,pack_cents) VALUES(?,?,?,?,?,?,?,?)",
                                    (code,name,size,grammage,specification.strip(),pack_qty,unit.strip() or 'un',pack_cents)).lastrowid
-            if category is not None:self.db.execute('UPDATE materials SET category=? WHERE id=?',(category,id))
             if price_date is not None:
                 self.db.execute('UPDATE materials SET price_date=? WHERE id=?',(price_date,id))
-            if variant_options is not None:
-                for v,label in zip(variant_options,cleaned):
-                    if v.get('id'):
-                        if not self.one('SELECT 1 FROM material_variants WHERE id=? AND material_id=?',(v['id'],id)):raise ValueError('Variação não pertence a este insumo.')
-                        self.db.execute('UPDATE material_variants SET name=? WHERE id=?',(label,v['id']))
             if variants is not None:
                 names={v.casefold() for v in cleaned}
                 for previous in self.variants(id):
@@ -309,12 +284,6 @@ class Store(Catalog,Purchasing,Finishing):
                     self.db.execute('''INSERT INTO material_variants(material_id,name,active) VALUES(?,?,1)
                                        ON CONFLICT(material_id,name) DO UPDATE SET active=1''',(id,value))
 
-            if variant_options is not None:
-                for v,label in zip(variant_options,cleaned):
-                    self.db.execute('UPDATE material_variants SET option_name=?,value_name=?,pack_cents=? WHERE material_id=? AND name=? COLLATE NOCASE',
-                        (v['option'].strip(),v['value'].strip(),v.get('pack_cents'),id,label))
-                for product in self.all('SELECT DISTINCT p.id FROM products p JOIN recipes r ON r.product_id=p.id JOIN materials m ON m.code=r.material_code COLLATE NOCASE WHERE m.id=?',(id,)):
-                    self.generate_cost_variations(product['id'])
         return id
 
     def toggle_material(self, id):
@@ -325,23 +294,17 @@ class Store(Catalog,Purchasing,Finishing):
         return self.all("SELECT * FROM products ORDER BY active DESC, name COLLATE NOCASE")
 
     def recipe(self, product_id):
-        rows=self.all("""SELECT r.*,m.id AS material_id,m.name AS material_name,m.pack_qty,m.pack_cents,m.unit,m.category
-            FROM recipes r LEFT JOIN materials m ON m.code=r.material_code COLLATE NOCASE
-            WHERE r.product_id=? ORDER BY r.position""",(product_id,))
-        choices=self.choices(product_id)
-        result=[]
-        for row in rows:
-            r=dict(row)
-            if r['material_id'] is not None:r['pack_cents']=self.material_price(r['material_id'],choices.get(r['material_id']))
-            result.append(r)
-        return result
+        return self.all("""SELECT r.*, m.name AS material_name, m.pack_qty, m.pack_cents, m.unit
+           FROM recipes r LEFT JOIN materials m ON m.code=r.material_code COLLATE NOCASE
+           WHERE r.product_id=? ORDER BY r.position""", (product_id,))
 
     def product_cost(self, product_id):
-        rows=self.recipe(product_id)
-        missing=[r['material_code'] for r in rows if r['material_name'] is None]
-        if not rows or missing:return None,missing
+        rows = self.recipe(product_id)
+        missing = [r['material_code'] for r in rows if r['material_name'] is None]
+        if not rows or missing:
+            return None, missing
         produced=self.one('SELECT base_yield FROM products WHERE id=?',(product_id,))['base_yield']
-        return sum(r['qty']*r['pack_cents']/r['pack_qty'] for r in rows)/produced,[]
+        return sum(r['qty'] * r['pack_cents'] / r['pack_qty'] for r in rows)/produced, []
 
     def suggested(self, product):
         cost, missing = self.product_cost(product['id'])
@@ -351,7 +314,7 @@ class Store(Catalog,Purchasing,Finishing):
         price = int((Decimal(str(cost)) * Decimal(str(product['markup']))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
         return price, []
 
-    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, kits=None, family_id=None, variation=None, choices=None):
+    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name or not math.isfinite(markup) or markup < 1:
@@ -362,11 +325,7 @@ class Store(Catalog,Purchasing,Finishing):
             raise ValueError('O rendimento deve ser um número inteiro entre 1 e 1000000.')
         if not recipe:
             raise ValueError("Adicione ao menos um insumo à composição.")
-        for material_code,qty in recipe:
-            if not math.isfinite(qty) or qty<=0:raise ValueError('Quantidade de insumo inválida.')
-        if family_id is not None and (family_id==id or not self.one('SELECT 1 FROM products WHERE id=?',(family_id,))):raise ValueError('Família de produto inválida.')
-        if kits is not None:kits=','.join(map(str,self.kit_quantities(kits)))
-        with self.atomic():
+        with self.db:
             if id:
                 self.db.execute("UPDATE products SET code=?,name=?,size=?,grammage=?,markup=?,table_cents=? WHERE id=?",
                                 (code,name,size,grammage,markup,table_cents,id))
@@ -376,15 +335,6 @@ class Store(Catalog,Purchasing,Finishing):
                                      (code,name,size,grammage,markup,table_cents)).lastrowid
             if base_yield is not None:
                 self.db.execute('UPDATE products SET base_yield=? WHERE id=?',(base_yield,id))
-            if kits is not None:self.db.execute('UPDATE products SET kits=? WHERE id=?',(kits,id))
-            if family_id is not None:self.db.execute('UPDATE products SET family_id=? WHERE id=?',(family_id,id))
-            if variation is not None:self.db.execute('UPDATE products SET variation=? WHERE id=?',(variation,id))
-            if choices is not None:
-                self.db.execute('DELETE FROM product_choices WHERE product_id=?',(id,))
-                for mid,vid in choices.items():
-                    valid=self.one('SELECT m.code FROM material_variants v JOIN materials m ON m.id=v.material_id WHERE v.id=? AND m.id=?',(vid,mid))
-                    if not valid or valid['code'].casefold() not in {c.casefold() for c,q in recipe}:raise ValueError('Variação incompatível com a composição.')
-                    self.db.execute('INSERT INTO product_choices VALUES(?,?,?)',(id,mid,vid))
             for pos,(material_code,qty) in enumerate(recipe):
                 if not self.one("SELECT 1 FROM materials WHERE code=? COLLATE NOCASE", (material_code,)):
                     raise ValueError(f"Insumo não encontrado: {material_code}")
@@ -445,25 +395,16 @@ class Store(Catalog,Purchasing,Finishing):
                                           f"Estorno por exclusão do pedido {order['number']}",
                                           variant_id=row['variant_id'])
             self.db.execute('UPDATE stock_movements SET order_id=NULL WHERE order_id=?',(id,))
-            for row in self.all('SELECT product_id,SUM(delta) AS net FROM product_movements WHERE order_id=? GROUP BY product_id',(id,)):
-                balance=self.one('SELECT COALESCE(SUM(delta),0) AS n FROM product_movements WHERE product_id=?',(row['product_id'],))['n']
-                if row['net']>0 and balance-row['net']<0:raise ValueError('A sobra deste pedido já foi retirada do estoque. Estorne a retirada antes de excluir a produção.')
-                if abs(row['net'])>1e-8:self.product_move(row['product_id'],-row['net'],'reversal','Exclusão de '+order['number'])
-            self.db.execute('UPDATE product_movements SET order_id=NULL WHERE order_id=?',(id,))
             self.db.execute('DELETE FROM order_items WHERE order_id=?',(id,))
             self.db.execute('DELETE FROM orders WHERE id=?',(id,))
 
-    def save_order(self, *, id=None, customer, due_date, payment, production, notes, items, paid_cents=0, customer_id=None):
-        if customer_id is not None:
-            client=self.one('SELECT name FROM customers WHERE id=?',(customer_id,))
-            if not client:raise ValueError('Cliente não encontrado.')
-            customer=client['name']
+    def save_order(self, *, id=None, customer, due_date, payment, production, notes, items, paid_cents=0):
         customer = customer.strip()
         if not customer or not items or not due_date:
             raise ValueError("Preencha cliente, entrega e ao menos um item.")
         date.fromisoformat(due_date)
         for item in items:
-            if not item['description'].strip() or not math.isfinite(item['qty']) or item['qty'] <= 0 or item['unit_cents'] is None or item['unit_cents'] < 0:
+            if not item['description'].strip() or item['qty'] <= 0 or item['unit_cents'] is None or item['unit_cents'] < 0:
                 raise ValueError("Cada item precisa de descrição, quantidade e preço.")
         if payment not in ('Pendente','Parcial','Pago','Presente'):
             raise ValueError('Selecione uma situação de pagamento válida.')
@@ -479,31 +420,13 @@ class Store(Catalog,Purchasing,Finishing):
             paid_cents=0
         old_items=list(self.items(id)) if id else []
         def signature(rows):
-            return Counter((r['product_id'],round(float(r['qty']),8),r.get('finish_source_id'),r.get('finish_material_id'),r.get('pricing_mode','batch'),r.get('stock_source','production'),
+            return Counter((r['product_id'],round(float(r['qty']),8),
                             tuple(sorted((int(k),int(v)) for k,v in (r.get('variants') or {}).items()))) for r in rows)
         stock_change = not id or signature(old_items)!=signature(items)
-        if not stock_change:
-            previous=list(old_items)
-            for item in items:
-                for old in previous:
-                    if signature([item])==signature([old]):
-                        for key in ('cost_unit_cents','batches','produced_qty','usage_json','pricing_mode','stock_source'):
-                            if key not in item:item[key]=old.get(key)
-                        previous.remove(old);break
-        usage=defaultdict(float);product_deltas=defaultdict(float)
+        usage=defaultdict(float)
         if stock_change:
             for item in items:
                 if item['product_id'] is None:
-                    continue
-                if item.get('pricing_mode','batch')!='legacy':
-                    saved=next((r for r in old_items if r['id']==item.get('id') and signature([r])==signature([item])),None)
-                    if saved and saved.get('usage_json') and saved.get('batches') is not None:
-                        q={k:saved[k] for k in ('pricing_mode','stock_source','batches','produced_qty','usage_json','cost_unit_cents')}
-                    else:q=self.order_quote(item['product_id'],item['qty'],item.get('stock_source','production'),item.get('variants'))
-                    item.update({k:v for k,v in q.items() if k!='unit_cents'})
-                    for key,used in json.loads(q['usage_json']).items():
-                        mid,vid=map(int,key.split(':'));usage[(mid,vid or None)]+=used
-                    product_deltas[item['product_id']]+=q['produced_qty']-item['qty']
                     continue
                 product=self.one('SELECT code,base_yield FROM products WHERE id=?',(item['product_id'],))
                 if not product:
@@ -515,10 +438,6 @@ class Store(Catalog,Purchasing,Finishing):
                 for r in recipe:
                     material=self.one('SELECT id FROM materials WHERE code=? COLLATE NOCASE',(r['material_code'],))
                     material_id=material['id']
-                    if item.get('finish_material_id') and material_id==item.get('finish_source_id'):
-                        material_id=item['finish_material_id']
-                        if not self.one('SELECT 1 FROM materials WHERE id=?',(material_id,)):
-                            raise ValueError('Insumo do acabamento não encontrado.')
                     variant_id=selections.get(material_id)
                     options=self.variants(material_id,active_only=True)
                     if self.variants(material_id) and not options and variant_id is None:
@@ -540,26 +459,13 @@ class Store(Catalog,Purchasing,Finishing):
                 id = self.db.execute("INSERT INTO orders(number,customer,created_date,due_date,payment,paid_cents,production,notes) VALUES(?,?,?,?,?,?,?,?)",
                                      (number,customer,date.today().isoformat(),due_date,payment,paid_cents,production,notes.strip())).lastrowid
                 self._remember_number(number)
-            self.db.execute('UPDATE orders SET customer_id=? WHERE id=?',(customer_id,id))
             for item in items:
                 item_id=self.db.execute("INSERT INTO order_items(order_id,product_id,description,qty,unit_cents) VALUES(?,?,?,?,?)",
                                         (id,item.get('product_id'),item['description'].strip(),item['qty'],item['unit_cents'])).lastrowid
-                self.db.execute('''UPDATE order_items SET finish_key=?,finish_name=?,finish_source_id=?,finish_material_id=?,cost_unit_cents=? WHERE id=?''',
-                    tuple(item.get(k) for k in ('finish_key','finish_name','finish_source_id','finish_material_id','cost_unit_cents'))+(item_id,))
-                self.db.execute('UPDATE order_items SET pricing_mode=?,stock_source=?,batches=?,produced_qty=?,usage_json=? WHERE id=?',
-                    (item.get('pricing_mode','batch'),item.get('stock_source','production'),item.get('batches'),item.get('produced_qty'),item.get('usage_json','{}'),item_id))
                 for material_id,variant_id in (item.get('variants') or {}).items():
                     self.db.execute('INSERT INTO order_item_variants(item_id,material_id,variant_id) VALUES(?,?,?)',
                                     (item_id,int(material_id),int(variant_id)))
             if stock_change:
-                old_product_movements=self.all('SELECT product_id,SUM(delta) AS net FROM product_movements WHERE order_id=? GROUP BY product_id',(id,))
-                for row in old_product_movements:
-                    if abs(row['net'])>1e-8:self.product_move(row['product_id'],-row['net'],'reversal','Edição do pedido',id)
-                    product_deltas.setdefault(row['product_id'],0)
-                for pid,delta in product_deltas.items():
-                    balance=self.one('SELECT COALESCE(SUM(delta),0) AS n FROM product_movements WHERE product_id=?',(pid,))['n']
-                    if balance+delta<0:raise ValueError('Estoque de produto insuficiente. Selecione Produzir ou registre uma entrada.')
-                    self.product_move(pid,delta,'order','Produção / retirada do pedido',id)
                 if old_items:
                     for previous in self.all('''SELECT material_id,variant_id,SUM(delta) AS net FROM stock_movements
                                                 WHERE order_id=? GROUP BY material_id,variant_id''',(id,)):
@@ -810,18 +716,16 @@ def export_order_pdf(store: Store, order_id: int, destination: str | Path):
     total=0; unknown=False
     for item in items:
         variants='; '.join(store.variant_labels(item.get('variants')))
-        finish=item.get('finish_name')
-        desc=item['description']+(f' | Acabamento: {finish}' if finish else '')+(f'  |  {variants}' if variants else '')
+        desc=item['description']+(f'  |  {variants}' if variants else '')
         nlines=max(1, (len(desc)+37)//38)
         if y-nlines*15 < 90:
             footer();cv.showPage();header();y=table_head(height-160)
         cv.setFont(font,9)
-        row_y=y
         y=line(desc,48,y,235)
-        cv.drawRightString(375,row_y,fmt_qty(item['qty']))
-        cv.drawRightString(460,row_y,money(item['unit_cents']))
+        cv.drawRightString(375,y+14*nlines,fmt_qty(item['qty']))
+        cv.drawRightString(460,y+14*nlines,money(item['unit_cents']))
         line_total=round(item['qty']*item['unit_cents']) if item['unit_cents'] is not None else None
-        cv.drawRightString(width-48,row_y,money(line_total))
+        cv.drawRightString(width-48,y+14*nlines,money(line_total))
         if line_total is None:unknown=True
         else:total+=line_total
         cv.setStrokeColor(colors.HexColor('#EAD9CC'));cv.line(38,y-3,width-38,y-3)

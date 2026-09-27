@@ -1,3 +1,48 @@
+## Build 5.1.0 — cadastro simplificado e recomeço
+
+**ATENÇÃO: na primeira abertura desta build, o banco local será zerado.**
+Clientes, insumos, variações, produtos, composições, pedidos, compras e movimentos
+serão removidos. Antes disso, é obrigatória uma cópia SQLite íntegra em
+`%LOCALAPPDATA%\ERP_Papeis_de_Marte\backups\antes_reset_5_1_0_*.db`.
+Se a cópia falhar, o programa não abre nem apaga os registros.
+A limpeza e seu marcador são gravados juntos: reabrir a aplicação preserva os
+novos dados. Instalações novas começam vazias, sem importar planilhas antigas.
+Os arquivos de backup existentes e a pasta de backup configurada são preservados.
+A limpeza só ocorre ao executar a nova versão no computador do usuário.
+Para recuperar uma cópia anterior à limpeza, use a build anterior: ela não
+contém o marcador desta migração.
+
+O cadastro de produtos mantém Produção e Embalagem, mas remove produto base e
+rendimento. Informe os insumos necessários para **1 produto**.
+O resumo fixo soma as duas listas e mostra `custo total × multiplicador = preço
+calculado`, atualizando ao adicionar/remover insumos ou alterar o multiplicador.
+Mesmo com multiplicador inválido o custo continua visível. O mínimo é 1.
+O antigo preço opcional é substituído por **Preço sugerido (R$) • Editável**,
+preenchido automaticamente. Você pode ajustar o valor antes de salvar. Alterar
+insumos ou multiplicador preenche novamente o campo com o cálculo; alterar
+nome, tamanho ou gramatura não sobrescreve seu preço. Reabrir preserva o preço
+salvo. O pedido usa esse preço, e a tabela de produtos exibe o preço de venda.
+Há ajuda `?` em cada campo do formulário, incluindo seleção e quantidade dos
+insumos. Passe o mouse, use o foco do teclado ou clique para ler a explicação.
+Novos produtos têm rendimento interno 1. O campo legado table_cents armazena
+o valor aceito/ajustado. Mudanças futuras no preço dos insumos atualizam o custo;
+para rever o preço de venda, abra o produto e ajuste o multiplicador ou sua
+composição antes de salvar. Preços de pedidos existentes não são alterados.
+
+Verificação automatizada: 40 testes executados, 30 aprovados e 10 ignorados
+por dependerem de uma planilha privada ausente do repositório. Inclui testes
+dos callbacks reais do formulário sem display, limpeza única, cópia íntegra,
+falha de backup e rollback. Compilação e validação visual no Windows pendentes.
+
+Compile no Windows com `compilar_windows.bat`. Versão interna: **5.1.0**.
+Este commit prepara o código; não altera `release-version.txt` e não dispara
+publicação automática. Para distribuir posteriormente pelo GitHub Actions,
+execute manualmente o workflow com a versão `5.1.0`. Qualquer instalação que
+executar esta build fará o reinício descrito acima uma única vez.
+
+---
+Histórico das versões anteriores (as regras acima prevalecem na 5.1.0):
+
 # ERP Papéis de Marte
 
 Aplicativo **offline** para Windows, escrito em Python com Tkinter e SQLite.

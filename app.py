@@ -14,6 +14,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from automatic_backup import AutomaticBackup
+from fresh_start import prepare_database
 from core import (Store, asset, automatic_code, br_date, cents, data_directory,
                   export_order_pdf, export_report_pdf, filter_orders, fmt_qty, money, parse_date, quantity)
 from updater import check_and_stage, launch_cached, read_config
@@ -26,8 +27,35 @@ MONTHS = ('Total','Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho',
           'Agosto','Setembro','Outubro','Novembro','Dezembro')
 
 
-def field(parent, label, row, default='', col=0, width=28, variable=None):
-    tk.Label(parent,text=label,bg=SURFACE,fg=OLIVE,font=(BODY,9,'bold')).grid(row=row,column=col,sticky='w',padx=10,pady=(12,3))
+def help_icon(parent, text):
+    """Ajuda disponível por mouse, clique ou foco do teclado."""
+    icon=tk.Button(parent,text='?',font=(BODY,9,'bold'),bg=CREAM,fg=OLIVE,
+                   relief='flat',cursor='question_arrow',width=2,takefocus=True)
+    popup=[None]
+    def hide(_=None):
+        if popup[0] is not None:
+            popup[0].destroy();popup[0]=None
+    def show(_=None):
+        if popup[0] is not None:return
+        tip=tk.Toplevel(icon);popup[0]=tip
+        tip.overrideredirect(True)
+        tk.Label(tip,text=text,bg=CREAM,fg=COFFEE,wraplength=300,justify='left',
+                 padx=12,pady=10,relief='solid',borderwidth=1,font=(BODY,10)).pack()
+        tip.update_idletasks()
+        x=min(icon.winfo_rootx(),icon.winfo_screenwidth()-tip.winfo_reqwidth()-8)
+        y=min(icon.winfo_rooty()+icon.winfo_height()+4,icon.winfo_screenheight()-tip.winfo_reqheight()-8)
+        tip.geometry(f'+{max(0,x)}+{max(0,y)}')
+    icon.configure(command=lambda:hide() if popup[0] else show())
+    for event in ('<Enter>','<FocusIn>'):icon.bind(event,show)
+    for event in ('<Leave>','<FocusOut>','<Escape>'):icon.bind(event,hide)
+    return icon
+
+
+def field(parent, label, row, default='', col=0, width=28, variable=None, help_text=None):
+    heading=tk.Frame(parent,bg=SURFACE)
+    heading.grid(row=row,column=col,sticky='w',padx=10,pady=(12,3))
+    tk.Label(heading,text=label,bg=SURFACE,fg=OLIVE,font=(BODY,9,'bold')).pack(side='left')
+    if help_text:help_icon(heading,help_text).pack(side='left',padx=6)
     entry=ttk.Entry(parent,width=width,textvariable=variable)
     entry.grid(row=row+1,column=col,sticky='ew',padx=10,pady=(0,3))
     if variable is None:entry.insert(0,str(default if default is not None else ''))
@@ -114,8 +142,9 @@ from purchase_ui import PurchaseUI
 class ERP(PurchaseUI):
     def __init__(self,root):
         self.root=root
-        workbook=asset('Precificação.xlsx')
-        self.store=Store(data_directory()/'marte.db',workbook if workbook.is_file() else None)
+        database=data_directory()/'marte.db'
+        prepare_database(database)
+        self.store=Store(database)
         root.title('Papéis de Marte • ERP offline')
         global BODY,HEADING
         BODY,HEADING=configure_fonts(root)
@@ -551,21 +580,22 @@ class ERP(PurchaseUI):
         button(footer,'Salvar cliente',save).pack(side='right')
 
     def product_page(self):
-        self.toolbar('Sugestão = custo dos insumos × multiplicador. Média = preço realizado por unidade.',
+        self.toolbar('Preço calculado = custo × multiplicador. Preço de venda = valor salvo no cadastro.',
                      [('Novo produto',lambda:self.product_dialog(),True),
                       ('Editar',lambda:self.edit_product(),False),
                       ('Ativar / inativar',lambda:self.toggle_product(),False)])
         self.filter_bar()
-        self.tree=grid(self.main,('Código','Produto','Tamanho','Gramatura','Custo/un.','Sugerido/un.','Tabela/un.','Média vendida','Estado'),
-                       (95,240,82,80,100,105,98,110,75))
+        self.tree=grid(self.main,('Código','Produto','Tamanho','Gramatura','Custo total','Preço de venda','Média vendida','Estado'),
+                       (95,240,82,80,110,120,110,75))
         term=self.search.get().casefold()
         for p in self.store.products():
             if term not in (p['code']+' '+p['name']+' '+p['size']+' '+p['grammage']).casefold():continue
             cost,missing=self.store.product_cost(p['id']);suggested,_=self.store.suggested(p)
             status='Revisar' if cost is None else ('Ativo' if p['active'] else 'Inativo')
+            sale=p['table_cents'] if p['table_cents'] is not None else suggested
             self.tree.insert('',tk.END,iid=str(p['id']),values=(p['code'],p['name'],p['size'],p['grammage'],
-                 money(round(cost)) if cost is not None else 'Revisar',money(suggested) if suggested is not None else 'Revisar',
-                 money(p['table_cents']),money(self.store.mean_price(p['id'])),status))
+                 money(round(cost)) if cost is not None else 'Revisar',money(sale) if sale is not None else 'Revisar',
+                 money(self.store.mean_price(p['id'])),status))
         tk.Label(self.main,text='"Revisar" indica composição vazia ou insumo não encontrado na planilha original.',
                  bg=BG,fg=RED,font=(BODY,9)).pack(anchor='w',padx=28,pady=(0,8))
         self.tree.bind('<Double-1>',lambda _:self.edit_product())
@@ -589,24 +619,27 @@ class ERP(PurchaseUI):
         body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=16)
         for i in range(2):body.grid_columnconfigure(i,weight=1)
         name_var,size_var,gram_var=(tk.StringVar() for _ in range(3))
-        name=field(body,'NOME DO PRODUTO',0,p['name'] if p else '',0,variable=name_var)
-        code=field(body,'CÓDIGO DO PRODUTO',0,p['code'] if p else '',1)
-        size=field(body,'TAMANHO',2,p['size'] if p else '',0,variable=size_var)
-        gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var)
-        markup=field(body,'MULTIPLICADOR SOBRE O CUSTO',4,str(p['markup']).replace('.',',') if p else '1,8',0)
-        table=field(body,'PREÇO POR UNIDADE (R$) • OPCIONAL',4,f"{p['table_cents']/100:.2f}".replace('.',',') if p and p['table_cents'] is not None else '',1)
-        yield_var=tk.StringVar()
-        produced=field(body,'PRODUTO BASE • PRODUZ QUANTAS UNIDADES?',6,
-                       p['base_yield'] if p else '1',0,variable=yield_var)
-        tk.Label(body,text='Ex.: 1 folha rende 5 peças → informe 5.\nNo pedido, a quantidade será de peças.',
-                 bg=SURFACE,fg=MUTED,justify='left',font=(BODY,9)).grid(row=7,column=1,sticky='w',padx=10)
-        tk.Label(content,text='COMPOSIÇÃO • quantidade usada para produzir o produto base',bg=SURFACE,fg=OLIVE,
+        name=field(body,'NOME DO PRODUTO',0,p['name'] if p else '',0,variable=name_var,
+                   help_text='Nome usado para identificar o produto no cadastro e nos pedidos. Obrigatório.')
+        code=field(body,'CÓDIGO DO PRODUTO',0,p['code'] if p else '',1,
+                   help_text='Identificador único do produto. Informe um código que ainda não esteja cadastrado.')
+        size=field(body,'TAMANHO',2,p['size'] if p else '',0,variable=size_var,
+                   help_text='Medida ou formato, por exemplo A4, A5 ou 10 × 15 cm. Opcional.')
+        gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var,
+                   help_text='Gramatura do papel em g/m², por exemplo 150. Opcional; não altera o custo sozinha.')
+        markup_var=tk.StringVar()
+        markup=field(body,'MULTIPLICADOR SOBRE O CUSTO',4,str(p['markup']).replace('.',',') if p else '1,8',0,variable=markup_var,
+                     help_text='Multiplica o custo dos insumos. Ex.: custo R$ 10,00 × 1,8 = R$ 18,00. Mínimo 1. Não é a margem percentual de lucro.')
+        price_var=tk.StringVar()
+        price=field(body,'PREÇO SUGERIDO (R$) • EDITÁVEL',4,'',1,variable=price_var,
+                    help_text='Preenchido com custo × multiplicador. Você pode ajustar antes de salvar. Alterar insumos ou multiplicador recalcula este campo. O valor salvo será usado nos novos pedidos.')
+        tk.Label(content,text='COMPOSIÇÃO • insumos necessários para 1 produto',bg=SURFACE,fg=OLIVE,
                  font=(BODY,10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
         entries=[(r['material_code'],r['qty']) for r in self.store.recipe(p['id'])] if p else []
         panels=tk.Frame(content,bg=SURFACE);panels.pack(fill='both',expand=True,padx=20,pady=5)
         panels.columnconfigure(0,weight=1);panels.columnconfigure(1,weight=1);panels.rowconfigure(0,weight=1)
         trees={};selectors={};mappings={}
-        def redraw():
+        def redraw(recalculate=True):
             running=0;missing=[]
             for tree in trees.values():tree.delete(*tree.get_children())
             for i,(material_code,amount) in enumerate(entries):
@@ -617,15 +650,19 @@ class ERP(PurchaseUI):
                 category=m['category'] if m else 'Produção'
                 trees[category].insert('',tk.END,iid=str(i),values=(f"{material_code} · {m['name']}" if m else material_code+' · NÃO ENCONTRADO',
                                                          fmt_qty(amount),money(round(value)) if value is not None else 'Revisar'))
-            try:factor=float(markup.get().replace(',','.'))
-            except ValueError:factor=1.8
+            if missing:
+                total_label.configure(text='Corrija os insumos: '+', '.join(missing));return
+            from decimal import Decimal, ROUND_HALF_UP
+            rounded=lambda value:int(Decimal(str(value)).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
+            summary=f'Custo total: {money(rounded(running))}'
             try:
-                count=int(produced.get())
-                if count<1 or not math.isfinite(factor):raise ValueError()
+                factor=float(markup.get().strip().replace(',','.'))
+                if not math.isfinite(factor) or factor<1:raise ValueError()
             except ValueError:
-                total_label.configure(text='Informe rendimento inteiro maior que zero e multiplicador válido.');return
-            total_label.configure(text=('Corrija os insumos: '+', '.join(missing)) if missing else
-                f'Base ({count} un.): {money(round(running))} • Custo/un.: {money(round(running/count))} • Sugerido/un.: {money(round(running/count*factor))}')
+                total_label.configure(text=summary+' • Informe um multiplicador válido (mínimo 1).');return
+            calculated=rounded(Decimal(str(running))*Decimal(str(factor)))
+            total_label.configure(text=summary+f'  ×  {factor:g}  =  Preço calculado: {money(calculated)}')
+            if recalculate:price_var.set(f'{calculated/100:.2f}'.replace('.',','))
         def refresh_materials(saved_id=None):
             for category in mappings:mappings[category].clear()
             for m in self.store.materials():
@@ -638,7 +675,9 @@ class ERP(PurchaseUI):
         for col,category in enumerate(('Produção','Embalagem')):
             panel=tk.LabelFrame(panels,text=category,bg=SURFACE,fg=OLIVE,font=(BODY,11,'bold'))
             panel.grid(row=0,column=col,sticky='nsew',padx=5)
-            combo=ttk.Combobox(panel,state='normal',width=38);combo.pack(fill='x',padx=8,pady=8)
+            choice=tk.Frame(panel,bg=SURFACE);choice.pack(fill='x',padx=8,pady=8)
+            help_icon(choice,'Selecione um insumo de '+category+'. O custo usa o preço e a quantidade da embalagem cadastrados em Insumos.').pack(side='right',padx=(5,0))
+            combo=ttk.Combobox(choice,state='normal',width=34);combo.pack(side='left',fill='x',expand=True)
             selectors[category]=combo;mappings[category]={}
             def search(_=None,c=category):
                 term=selectors[c].get().strip().casefold()
@@ -647,6 +686,7 @@ class ERP(PurchaseUI):
             row=tk.Frame(panel,bg=SURFACE);row.pack(fill='x',padx=8,pady=(0,5))
             tk.Label(row,text='Qtd:',bg=SURFACE,fg=MUTED).pack(side='left')
             qty=ttk.Entry(row,width=7);qty.insert(0,'1');qty.pack(side='left',padx=5)
+            help_icon(row,'Quantidade deste insumo necessária para 1 produto, na unidade cadastrada no insumo. Aceita frações: 0,5 significa meia unidade. Clique em Adicionar para incluir no custo.').pack(side='left')
             def add(c=category,q=qty):
                 try:
                     label=selectors[c].get()
@@ -665,14 +705,14 @@ class ERP(PurchaseUI):
                 if selected:entries.pop(int(selected[0]));redraw()
             button(panel,'Remover selecionado',remove,False).pack(anchor='e',padx=8,pady=5)
         refresh_materials();redraw()
-        yield_var.trace_add('write',lambda *_:redraw())
-        markup.bind('<KeyRelease>',lambda _:redraw())
+        if p and p['table_cents'] is not None:price_var.set(f"{p['table_cents']/100:.2f}".replace('.',','))
+        markup_var.trace_add('write',lambda *_:redraw())
         def save():
             try:
                 factor=float(markup.get().strip().replace(',','.'))
                 self.store.save_product(id=p['id'] if p else None,code=code.get(),name=name.get(),
                     size=size.get(),grammage=gram.get(),markup=factor,
-                    table_cents=cents(table.get(),allow_empty=True),recipe=entries,base_yield=int(produced.get()))
+                    table_cents=cents(price.get()),recipe=entries,base_yield=1)
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')
@@ -1242,6 +1282,10 @@ if __name__=='__main__':
         raise SystemExit(0)
     root=tk.Tk()
     root.iconphoto(True,tk.PhotoImage(file=str(asset('logo.png'))))
-    ERP(root)
+    try:
+        ERP(root)
+    except Exception as exc:
+        messagebox.showerror('Não foi possível iniciar',f'O programa não foi aberto. Verifique o banco e a pasta de backup.\n\n{exc}',parent=root)
+        root.destroy()
+        raise SystemExit(1)
     root.mainloop()
-

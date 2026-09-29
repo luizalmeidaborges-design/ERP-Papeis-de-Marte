@@ -80,7 +80,7 @@ class ResetTests(unittest.TestCase):
 
 
 class Variable:
-    def __init__(self,*args,**kwargs):self.value='';self.callbacks=[]
+    def __init__(self,*args,**kwargs):self.value=kwargs.get('value','');self.callbacks=[]
     def get(self):return self.value
     def set(self,value):
         self.value=str(value)
@@ -112,6 +112,8 @@ class Widget:
     def delete(self,*items):
         for item in items:self.rows.pop(item,None)
     def selection(self):return self.selected
+    def selection_set(self,value):self.selected=(value,)
+    def tag_configure(self,*a,**k):pass
 
 
 class ProductFormTests(unittest.TestCase):
@@ -159,9 +161,8 @@ class ProductFormTests(unittest.TestCase):
         self.assertTrue(all(self.helps))
         self.add_material(0);self.add_material(1)
         price=self.fields['PREÇO SUGERIDO (R$) • EDITÁVEL']
-        factor=self.fields['MULTIPLICADOR SOBRE O CUSTO']
+        self.assertNotIn('MULTIPLICADOR SOBRE O CUSTO',self.fields)
         self.assertEqual(price.get(),'1,93')  # (0.65 + 0.42) * 1.8
-        factor.set('2,5');self.assertEqual(price.get(),'2,68')
         price.set('3,50')
         self.fields['NOME DO PRODUTO'].set('Produto')
         self.fields['CÓDIGO DO PRODUTO'].set('PRO')
@@ -179,17 +180,13 @@ class ProductFormTests(unittest.TestCase):
         price=self.fields['PREÇO SUGERIDO (R$) • EDITÁVEL']
         self.assertEqual(price.get(),'9,99')
         self.fields['TAMANHO'].set('A4');self.assertEqual(price.get(),'9,99')
-        self.fields['MULTIPLICADOR SOBRE O CUSTO'].set('2')
-        self.assertEqual(price.get(),'1,30')
+        self.add_material(1)
+        self.assertEqual(price.get(),'1,93')
 
-    def test_invalid_factor_keeps_cost_visible_and_prevents_save(self):
-        self.form();self.add_material(0)
-        factor=self.fields['MULTIPLICADOR SOBRE O CUSTO']
-        for invalid in ('','abc','nan','inf','0,5'):
-            factor.set(invalid)
-            self.assertTrue(any('Custo total: R$ 0,65' in w.options.get('text','') for w in self.labels))
-            with self.assertRaises(ValueError):self.actions['Salvar produto'][0]()
-        factor.set('2');self.assertEqual(self.fields['PREÇO SUGERIDO (R$) • EDITÁVEL'].get(),'1,30')
+    def test_global_factor_drives_suggestion(self):
+        self.store.set_cost_multiplier('2,5')
+        self.form();self.add_material(0);self.add_material(1)
+        self.assertEqual(self.fields['PREÇO SUGERIDO (R$) • EDITÁVEL'].get(),'2,68')
 
 
 if __name__=='__main__':unittest.main()

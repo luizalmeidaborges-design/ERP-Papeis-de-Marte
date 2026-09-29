@@ -220,6 +220,34 @@ class Store(Purchasing):
     def close(self):
         self.db.close()
 
+    def cost_multiplier(self):
+        self.db.execute('CREATE TABLE IF NOT EXISTS app_settings (name TEXT PRIMARY KEY,value TEXT NOT NULL)')
+        row=self.one("SELECT value FROM app_settings WHERE name='cost_multiplier'")
+        try:
+            value=float(row['value'].replace(',','.')) if row else 1.8
+            return value if math.isfinite(value) and 1<=value<=1000 else 1.8
+        except (ValueError,TypeError):return 1.8
+
+    def set_cost_multiplier(self,text):
+        try:
+            value=float(str(text).strip().replace(',','.'))
+            if not math.isfinite(value) or not 1<=value<=1000:raise ValueError()
+        except (ValueError,TypeError):raise ValueError('Informe um multiplicador entre 1 e 1000, como 1,8.')
+        self.cost_multiplier()
+        with self.db:
+            self.db.execute("INSERT OR REPLACE INTO app_settings(name,value) VALUES('cost_multiplier',?)",(str(value),))
+
+    def delete_material(self,material_id):
+        with self.db:
+            material=self.one('SELECT code FROM materials WHERE id=?',(material_id,))
+            if material is None:raise ValueError('Insumo não encontrado.')
+            used=self.one('SELECT 1 FROM recipes WHERE material_code=? COLLATE NOCASE',(material['code'],))
+            for table in ('stock_movements','purchase_items','order_item_variants'):
+                used=used or self.one(f'SELECT 1 FROM {table} WHERE material_id=?',(material_id,))
+            if used:raise ValueError('Este insumo possui composição ou histórico de estoque, compras ou pedidos. Use Ativar / inativar para preservar os registros.')
+            self.db.execute('DELETE FROM material_variants WHERE material_id=?',(material_id,))
+            self.db.execute('DELETE FROM materials WHERE id=?',(material_id,))
+
     def all(self, query, params=()):
         return self.db.execute(query, params).fetchall()
 
@@ -887,4 +915,3 @@ def export_report_pdf(data: dict, destination: str | Path):
               money(round(r['total_cents'])) if not r['unpriced'] else 'A definir') for r in data['orders']],
             [55,115,70,80,105,available-425])
     pdf.build(story,onFirstPage=header,onLaterPages=header)
-

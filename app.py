@@ -14,7 +14,6 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from automatic_backup import AutomaticBackup
-from fresh_start import prepare_database
 from core import (Store, asset, automatic_code, br_date, cents, data_directory,
                   export_order_pdf, export_report_pdf, filter_orders, fmt_qty, money, parse_date, quantity)
 from updater import check_and_stage, launch_cached, read_config
@@ -57,6 +56,8 @@ def field(parent, label, row, default='', col=0, width=28, variable=None, help_t
     tk.Label(heading,text=label,bg=SURFACE,fg=OLIVE,font=(BODY,9,'bold')).pack(side='left')
     if help_text:help_icon(heading,help_text).pack(side='left',padx=6)
     entry=ttk.Entry(parent,width=width,textvariable=variable)
+    # Keep Tcl variables alive for the lifetime of the entry, not just the dialog builder.
+    entry._variable=variable
     entry.grid(row=row+1,column=col,sticky='ew',padx=10,pady=(0,3))
     if variable is None:entry.insert(0,str(default if default is not None else ''))
     else:variable.set(str(default if default is not None else ''))
@@ -143,7 +144,6 @@ class ERP(PurchaseUI):
     def __init__(self,root):
         self.root=root
         database=data_directory()/'marte.db'
-        prepare_database(database)
         self.store=Store(database)
         root.title('Papéis de Marte • ERP offline')
         global BODY,HEADING
@@ -347,6 +347,7 @@ class ERP(PurchaseUI):
         tk.Label(head,text=self.page,bg=BG,fg=RED,font=(HEADING,24,'bold')).pack(side='left')
         tk.Label(head,text=date.today().strftime('%d/%m/%Y'),bg=BG,fg=MUTED,
                  font=(BODY,10)).pack(side='right')
+        button(head,'⚙',self.settings_dialog,False).pack(side='right',padx=8)
         tk.Button(head,text='📁',command=self.choose_backup_folder,
                   bg=CREAM,fg=OLIVE,activebackground='#D8B08C',relief='flat',bd=0,
                   cursor='hand2',font=(BODY,12),padx=7,pady=3).pack(side='right',padx=(0,12))
@@ -420,7 +421,8 @@ class ERP(PurchaseUI):
         self.toolbar('Preço da embalagem ÷ quantidade = custo por unidade.',
                      [('Novo insumo',lambda:self.material_dialog(),True),
                       ('Editar',lambda:self.edit_material(),False),
-                      ('Ativar / inativar',lambda:self.toggle_material(),False)])
+                      ('Ativar / inativar',lambda:self.toggle_material(),False),
+                      ('Excluir',self.delete_material,False)])
         filters=tk.Frame(self.main,bg=BG);filters.pack(fill='x',padx=26,pady=5)
         variables={}
         for i,(key,label) in enumerate((('name','Nome / código'),('size','Tamanho'),
@@ -463,16 +465,40 @@ class ERP(PurchaseUI):
         id=self.selection(self.tree)
         if id:self.store.toggle_material(id);self.render()
 
+    def delete_material(self):
+        id=self.selection(self.tree)
+        if not id:return
+        if not messagebox.askyesno('Excluir insumo','Excluir o insumo selecionado? Insumos com histórico ou usados em produtos não podem ser excluídos.',parent=self.root):return
+        try:
+            self.store.delete_material(id);self.render()
+        except ValueError as exc:messagebox.showerror('Não foi possível excluir',str(exc),parent=self.root)
+
     def modal(self,title,width=670,height=530):
         win=tk.Toplevel(self.root);win.title(title);win.configure(bg=SURFACE)
         available_w=max(320,win.winfo_screenwidth()-50)
         available_h=max(300,win.winfo_screenheight()-100)
         win.geometry(f'{min(width,available_w)}x{min(height,available_h)}')
         win.minsize(min(width,available_w),min(height,480,available_h))
-        if width>available_w or height>available_h:win.after_idle(lambda:maximize(win))
+        win.after_idle(lambda:maximize(win))
         win.transient(self.root);win.grab_set()
         tk.Label(win,text=title,bg=SURFACE,fg=OLIVE,font=(HEADING,18,'bold')).pack(anchor='w',padx=22,pady=(17,8))
         return win
+
+    def settings_dialog(self):
+        win=self.modal('Configurações',720,450)
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=24,pady=16)
+        area=ScrollArea(win,background=SURFACE,min_width=620,min_height=250)
+        area.pack(fill='both',expand=True)
+        value=field(area.content,'MULTIPLICADOR GERAL DE CUSTO',0,str(self.store.cost_multiplier()).replace('.',','),
+                    help_text='Preço sugerido = custo total × multiplicador. Ex.: R$ 10 × 1,8 = R$ 18. Mínimo 1. Usado em novos produtos e ao recalcular composições. Preços salvos e pedidos antigos são preservados.')
+        tk.Label(area.content,text='Aplicado às próximas sugestões de preço. Produtos e pedidos já salvos mantêm seus preços.',
+                 bg=SURFACE,fg=MUTED,wraplength=550,justify='left').grid(row=2,column=0,padx=10,pady=16,sticky='w')
+        def save():
+            try:
+                self.store.set_cost_multiplier(value.get())
+                win.destroy();self.render()
+            except ValueError as exc:self.fail(exc,win)
+        button(footer,'Salvar configurações',save).pack(side='right')
 
     def fail(self,exc,win):
         text=str(exc)
@@ -627,12 +653,12 @@ class ERP(PurchaseUI):
                    help_text='Medida ou formato, por exemplo A4, A5 ou 10 × 15 cm. Opcional.')
         gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var,
                    help_text='Gramatura do papel em g/m², por exemplo 150. Opcional; não altera o custo sozinha.')
-        markup_var=tk.StringVar()
-        markup=field(body,'MULTIPLICADOR SOBRE O CUSTO',4,str(p['markup']).replace('.',',') if p else '1,8',0,variable=markup_var,
-                     help_text='Multiplica o custo dos insumos. Ex.: custo R$ 10,00 × 1,8 = R$ 18,00. Mínimo 1. Não é a margem percentual de lucro.')
+        factor=self.store.cost_multiplier()
+        tk.Label(body,text=f'Multiplicador geral: {factor:g} • ajuste na engrenagem ⚙',bg=SURFACE,fg=MUTED,
+                 wraplength=360,justify='left').grid(row=5,column=0,sticky='w',padx=10)
         price_var=tk.StringVar()
         price=field(body,'PREÇO SUGERIDO (R$) • EDITÁVEL',4,'',1,variable=price_var,
-                    help_text='Preenchido com custo × multiplicador. Você pode ajustar antes de salvar. Alterar insumos ou multiplicador recalcula este campo. O valor salvo será usado nos novos pedidos.')
+                    help_text='Preenchido com custo × multiplicador geral. Você pode ajustar antes de salvar. Alterar insumos recalcula este campo. O valor salvo será usado nos novos pedidos.')
         tk.Label(content,text='COMPOSIÇÃO • insumos necessários para 1 produto',bg=SURFACE,fg=OLIVE,
                  font=(BODY,10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
         entries=[(r['material_code'],r['qty']) for r in self.store.recipe(p['id'])] if p else []
@@ -655,11 +681,6 @@ class ERP(PurchaseUI):
             from decimal import Decimal, ROUND_HALF_UP
             rounded=lambda value:int(Decimal(str(value)).quantize(Decimal('1'),rounding=ROUND_HALF_UP))
             summary=f'Custo total: {money(rounded(running))}'
-            try:
-                factor=float(markup.get().strip().replace(',','.'))
-                if not math.isfinite(factor) or factor<1:raise ValueError()
-            except ValueError:
-                total_label.configure(text=summary+' • Informe um multiplicador válido (mínimo 1).');return
             calculated=rounded(Decimal(str(running))*Decimal(str(factor)))
             total_label.configure(text=summary+f'  ×  {factor:g}  =  Preço calculado: {money(calculated)}')
             if recalculate:price_var.set(f'{calculated/100:.2f}'.replace('.',','))
@@ -706,10 +727,8 @@ class ERP(PurchaseUI):
             button(panel,'Remover selecionado',remove,False).pack(anchor='e',padx=8,pady=5)
         refresh_materials();redraw()
         if p and p['table_cents'] is not None:price_var.set(f"{p['table_cents']/100:.2f}".replace('.',','))
-        markup_var.trace_add('write',lambda *_:redraw())
         def save():
             try:
-                factor=float(markup.get().strip().replace(',','.'))
                 self.store.save_product(id=p['id'] if p else None,code=code.get(),name=name.get(),
                     size=size.get(),grammage=gram.get(),markup=factor,
                     table_cents=cents(price.get()),recipe=entries,base_yield=1)
@@ -736,25 +755,50 @@ class ERP(PurchaseUI):
         self.stock_tree.configure(yscrollcommand=scroll.set)
         self.stock_tree.pack(side='left',fill='x',expand=True);scroll.pack(side='right',fill='y')
         self.stock_tree.tag_configure('deficit',foreground=RED_DARK)
-        self.stock_balances={};self.stock_rows={}
-        for m in self.store.stock():
-            key=f"{m['id']}:{m['variant_id'] or 0}"
-            self.stock_balances[key]=m['balance'];self.stock_rows[key]=m
-            status=('Negativo' if m['balance']<0 else 'Inativa' if not m['variant_active']
-                    else 'Disponível' if m['balance']>0 else 'Zerado')
-            self.stock_tree.insert('',tk.END,iid=key,tags=('deficit',) if m['balance']<0 else (),
-                values=(m['code'],m['name'],m['variant_name'],m['size'],m['grammage'],
-                        fmt_qty(m['balance']),m['unit'],status))
         tk.Label(self.main,text='Histórico do insumo selecionado',bg=BG,fg=OLIVE,
                  font=(BODY,14,'bold')).pack(anchor='w',padx=26,pady=(0,3))
         self.stock_history_tree=grid(self.main,('Data','Movimento','Pedido','Quantidade','Saldo após','Motivo'),
                                      (100,145,100,115,105,340))
         self.stock_tree.bind('<<TreeviewSelect>>',lambda _:self.show_stock_history())
-        if self.stock_tree.get_children():self.stock_tree.selection_set(self.stock_tree.get_children()[0]);self.show_stock_history()
+        filter_bar=tk.Frame(self.main,bg=BG)
+        filter_bar.pack(before=table_box,fill='x',padx=26,pady=8)
+        self.stock_filter_vars={}
+        saved=getattr(self,'stock_filters',{})
+        for col,(key,label) in enumerate((('text','Nome / código'),('variant','Variação'),('size','Tamanho'),('status','Situação'))):
+            group=tk.Frame(filter_bar,bg=BG);group.pack(side='left',fill='x',expand=True,padx=4)
+            tk.Label(group,text=label,bg=BG,fg=MUTED).pack(anchor='w')
+            var=tk.StringVar(value=saved.get(key,''));self.stock_filter_vars[key]=var
+            entry=(ttk.Combobox(group,textvariable=var,state='readonly',values=('','Disponível','Zerado','Negativo','Inativa'),width=13)
+                   if key=='status' else ttk.Entry(group,textvariable=var,width=18))
+            entry.pack(fill='x')
+        def populate(*_):
+            self.stock_filters={key:var.get() for key,var in self.stock_filter_vars.items()}
+            self.stock_tree.delete(*self.stock_tree.get_children())
+            self.stock_history_tree.delete(*self.stock_history_tree.get_children())
+            self.stock_balances={};self.stock_rows={}
+            for m in self.store.stock():
+                status=('Negativo' if m['balance']<0 else 'Inativa' if not m['variant_active']
+                        else 'Disponível' if m['balance']>0 else 'Zerado')
+                values={'text':m['code']+' '+m['name'],'variant':m['variant_name'],'size':m['size'],'status':status}
+                if any(v.strip().casefold() not in values[k].casefold() for k,v in self.stock_filters.items() if k!='status'):continue
+                if self.stock_filters['status'] and self.stock_filters['status']!=status:continue
+                key=f"{m['id']}:{m['variant_id'] or 0}"
+                self.stock_balances[key]=m['balance'];self.stock_rows[key]=m
+                self.stock_tree.insert('',tk.END,iid=key,tags=('deficit',) if m['balance']<0 else (),
+                    values=(m['code'],m['name'],m['variant_name'],m['size'],m['grammage'],fmt_qty(m['balance']),m['unit'],status))
+            if self.stock_tree.get_children():
+                self.stock_tree.selection_set(self.stock_tree.get_children()[0]);self.show_stock_history()
+        def clear():
+            for var in self.stock_filter_vars.values():var.set('')
+        button(filter_bar,'Limpar',clear,False).pack(side='left',padx=5)
+        for var in self.stock_filter_vars.values():var.trace_add('write',populate)
+        populate()
+
 
     def show_stock_history(self):
         if not self.stock_tree.selection():return
         key=self.stock_tree.selection()[0]
+        if key not in self.stock_rows:return
         material=self.stock_rows[key]
         balance=self.stock_balances[key]
         self.stock_history_tree.delete(*self.stock_history_tree.get_children())
@@ -776,22 +820,27 @@ class ERP(PurchaseUI):
         title={'entry':'Entrada de estoque','manual_out':'Retirada forçada',
                'adjustment':'Corrigir saldo'}[action]
         win=self.modal(title,600,330)
-        tk.Label(win,text=f"{m['code']} • {m['name']} • {m['variant_name']}  |  Saldo: {fmt_qty(self.stock_balances[key])} {m['unit']}",
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=25,pady=15)
+        area=ScrollArea(win,background=SURFACE,min_width=550,min_height=300)
+        area.pack(fill='both',expand=True);content=area.content
+        tk.Label(content,text=f"{m['code']} • {m['name']} • {m['variant_name']}  |  Saldo: {fmt_qty(self.stock_balances[key])} {m['unit']}",
                  bg=SURFACE,fg=OLIVE,font=(BODY,11)).pack(anchor='w',padx=25,pady=(4,5))
-        body=tk.Frame(win,bg=SURFACE);body.pack(fill='x',padx=16)
+        body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=16)
         label='SALDO FINAL DESEJADO' if action=='adjustment' else 'QUANTIDADE A '+('ENTRAR' if action=='entry' else 'RETIRAR')
         amount=field(body,label,0,fmt_qty(self.stock_balances[key]) if action=='adjustment' else '1')
         reason=field(body,'MOTIVO (OBRIGATÓRIO)',2,'')
-        tk.Label(win,text='A retirada forçada pode deixar o saldo negativo. Cada alteração fica no histórico.',
+        tk.Label(content,text='A retirada forçada pode deixar o saldo negativo. Cada alteração fica no histórico.',
                  bg=SURFACE,fg=MUTED,font=(BODY,9)).pack(anchor='w',padx=25,pady=(9,0))
         def save():
             try:
                 value=float(amount.get().strip().replace(',','.')) if action=='adjustment' else quantity(amount.get())
                 if not math.isfinite(value):raise ValueError('Informe um saldo válido.')
                 self.store.adjust_stock(m['id'],action,value,reason.get(),variant_id=m['variant_id'])
-                win.destroy();self.render();self.stock_tree.selection_set(key);self.stock_tree.see(key);self.show_stock_history()
+                win.destroy();self.render()
+                if key in self.stock_rows:
+                    self.stock_tree.selection_set(key);self.stock_tree.see(key);self.show_stock_history()
             except ValueError as exc:self.fail(exc,win)
-        button(win,'Registrar movimentação',save).pack(side='right',padx=25,pady=19)
+        button(footer,'Registrar movimentação',save).pack(side='right',padx=25,pady=19)
 
     def transfer_dialog(self):
         selection=self.stock_tree.selection()
@@ -805,14 +854,17 @@ class ERP(PurchaseUI):
             messagebox.showinfo('Sem destino','Cadastre outra variação ativa neste insumo para transferir.',parent=self.root)
             return
         win=self.modal('Transferir entre variações',630,360)
-        tk.Label(win,text=f"Origem: {source['name']} • {source['variant_name']} | Saldo: {fmt_qty(source['balance'])} {source['unit']}",
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=25,pady=15)
+        area=ScrollArea(win,background=SURFACE,min_width=550,min_height=300)
+        area.pack(fill='both',expand=True);content=area.content
+        tk.Label(content,text=f"Origem: {source['name']} • {source['variant_name']} | Saldo: {fmt_qty(source['balance'])} {source['unit']}",
                  bg=SURFACE,fg=OLIVE,font=(BODY,11)).pack(anchor='w',padx=25,pady=(4,10))
-        body=tk.Frame(win,bg=SURFACE);body.pack(fill='x',padx=20)
+        body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=20)
         tk.Label(body,text='VARIAÇÃO DE DESTINO',bg=SURFACE,fg=OLIVE,
                  font=(BODY,9,'bold')).pack(anchor='w')
         target=ttk.Combobox(body,values=[v['name'] for v in options],state='readonly',width=35)
         target.pack(anchor='w',fill='x',pady=(3,8))
-        form=tk.Frame(win,bg=SURFACE);form.pack(fill='x',padx=15)
+        form=tk.Frame(content,bg=SURFACE);form.pack(fill='x',padx=15)
         amount=field(form,'QUANTIDADE A TRANSFERIR',0,'1')
         reason=field(form,'MOTIVO',2,'Distribuição por variação')
         def save():
@@ -825,7 +877,7 @@ class ERP(PurchaseUI):
                 if key in self.stock_rows:
                     self.stock_tree.selection_set(key);self.stock_tree.see(key);self.show_stock_history()
             except ValueError as exc:self.fail(exc,win)
-        button(win,'Transferir',save).pack(side='right',padx=25,pady=13)
+        button(footer,'Transferir',save).pack(side='right',padx=25,pady=13)
 
     def calendar_page(self):
         today=date.today()

@@ -5,7 +5,7 @@ from tkinter import ttk, messagebox
 from datetime import date
 from core import cents, quantity, money, fmt_qty, br_date
 
-from visual_theme import BG,SURFACE,OLIVE,RED
+from visual_theme import BG,SURFACE,OLIVE,RED,ScrollArea
 
 
 class PurchaseUI:
@@ -35,15 +35,18 @@ class PurchaseUI:
     def purchase_dialog(self):
         from app import button, field, grid
         win=self.modal('Nova ordem de compra',880,640)
-        tk.Label(win,text='Data: '+date.today().strftime('%d/%m/%Y')+' • Compra recebida e paga',
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=26,pady=16)
+        area=ScrollArea(win,background=SURFACE,min_width=820,min_height=500)
+        area.pack(fill='both',expand=True);content=area.content
+        tk.Label(content,text='Data: '+date.today().strftime('%d/%m/%Y')+' • Compra recebida e paga',
                  bg=SURFACE,fg=OLIVE).pack(anchor='w',padx=26)
-        form=tk.Frame(win,bg=SURFACE);form.pack(fill='x',padx=16)
+        form=tk.Frame(content,bg=SURFACE);form.pack(fill='x',padx=16)
         for i in range(2):form.grid_columnconfigure(i,weight=1)
         supplier=field(form,'FORNECEDOR (OPCIONAL)',0)
         notes=field(form,'OBSERVAÇÕES',0,col=1)
-        tk.Label(win,text='Quantidade na unidade do insumo: ex. 2 pacotes de 100 folhas = 200 un. Valor = total pago pela linha.',
+        tk.Label(content,text='Quantidade na unidade do insumo: ex. 2 pacotes de 100 folhas = 200 un. Valor = total pago pela linha.',
                  bg=SURFACE,fg=OLIVE,wraplength=820,justify='left').pack(anchor='w',padx=26,pady=12)
-        chooser=tk.Frame(win,bg=SURFACE);chooser.pack(fill='x',padx=26)
+        chooser=tk.Frame(content,bg=SURFACE);chooser.pack(fill='x',padx=26)
         chooser.grid_columnconfigure(0,weight=1)
         for col,label in enumerate(('INSUMO / VARIAÇÃO / UNIDADE','QUANTIDADE','TOTAL PAGO (R$)')):
             tk.Label(chooser,text=label,bg=SURFACE,fg=OLIVE).grid(row=0,column=col,sticky='w')
@@ -60,10 +63,9 @@ class PurchaseUI:
         combo.bind('<KeyRelease>',lambda _:combo.configure(values=[v for v in mapping if combo.get().casefold() in v.casefold()]))
         qty=ttk.Entry(chooser,width=12);qty.insert(0,'1');qty.grid(row=1,column=1,padx=4)
         paid=ttk.Entry(chooser,width=14);paid.grid(row=1,column=2,padx=4)
-        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=26,pady=16)
         total=tk.StringVar(value='Total: R$ 0,00')
         tk.Label(footer,textvariable=total,bg=SURFACE,fg=RED,font=('Segoe UI',12,'bold')).pack(side='left')
-        tree=grid(win,('Insumo / variação','Qtd','Unidade','Total pago'),(420,80,70,110))
+        tree=grid(content,('Insumo / variação','Qtd','Unidade','Total pago'),(420,80,70,110))
         items=[]
         def redraw():
             tree.delete(*tree.get_children())
@@ -98,3 +100,4 @@ class PurchaseUI:
             saved=True
             win.destroy();self.render()
         button(footer,'Confirmar compra',save).pack(side='right')
+

@@ -1,3 +1,37 @@
+## Build 5.1.1 — configurações, cálculo e formulários
+
+Esta versão **preserva o banco existente**. A chamada de limpeza automática da
+5.1.0 foi retirada da inicialização, inclusive para quem atualizar de versões
+anteriores diretamente. Nenhum cadastro é apagado ao abrir esta build.
+
+- Engrenagem **⚙** no cabeçalho: configura o multiplicador geral de custo, salvo
+  no banco e incluído no backup. Padrão 1,8; aceita vírgula ou ponto, de 1 a 1000.
+- O campo de multiplicador sai do cadastro de produto. A composição soma
+  Produção + Embalagem e preenche o preço sugerido usando o multiplicador geral.
+  O preço continua editável. Configurar outro multiplicador não altera preços
+  já salvos nem pedidos existentes; abra/recalcule a composição para aplicar.
+- Corrigida a vida útil das variáveis dos campos Tkinter: ficam vinculadas ao
+  widget, evitando leitura inválida depois que o formulário termina de montar.
+- Janelas abrem maximizadas. Movimentação, transferência e compras recebem
+  conteúdo rolável e rodapé de ações separado; os demais cadastros conservam
+  seus rodapés fixos. Botões de confirmação ficam fora do conteúdo rolável.
+- Estoque: filtros combináveis por nome/código, variação, tamanho e situação,
+  com botão Limpar. Histórico é limpo quando o filtro não retorna resultados.
+- Insumos: botão Excluir com confirmação. Exclui insumos sem vínculo e suas
+  variações. Se houver composição, estoque, compra ou pedido vinculado, a
+  exclusão é bloqueada; use Ativar / inativar para preservar o histórico.
+
+Verificação: 44 testes executados, 34 aprovados e 10 ignorados por dependerem
+da planilha privada. Inclui persistência/validação das configurações, callbacks
+de preço e filtro, referência de variável Tcl após coleta de lixo e exclusão.
+Compilação e validação visual no Windows ainda pendentes.
+
+Compile com `compilar_windows.bat` ou execute manualmente **Compilar e publicar
+ERP** em `main`, informando **5.1.1**. Este commit não dispara publicação.
+
+---
+Histórico abaixo: as instruções da build 5.1.1 prevalecem.
+
 ## Build 5.1.0 — cadastro simplificado e recomeço
 
 **ATENÇÃO: na primeira abertura desta build, o banco local será zerado.**

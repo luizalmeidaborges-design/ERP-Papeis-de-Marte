@@ -86,6 +86,8 @@ class Variable:
         self.value=str(value)
         for callback in self.callbacks:callback(None,None,None)
     def trace_add(self,mode,callback):self.callbacks.append(callback)
+    def delete(self,*args):self.set('')
+    def insert(self,index,value):self.set(value)
 
 
 class Widget:
@@ -153,7 +155,7 @@ class ProductFormTests(unittest.TestCase):
         self.ui.product_dialog(p)
 
     def add_material(self,index):
-        combo=self.combos[index];combo.set(combo.options['values'][0]);self.actions['Adicionar'][index]()
+        combo=self.combos[index+1];combo.set(combo.options['values'][index]);self.actions['Adicionar'][index]()
 
     def test_live_sum_multiplier_edit_save_and_order_consumption(self):
         self.form()

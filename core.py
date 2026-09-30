@@ -184,6 +184,7 @@ class Store(Purchasing):
           CREATE INDEX IF NOT EXISTS stock_order_id ON stock_movements(order_id);
         """)
         self.migrate_schema()
+        self.migrate_catalog()
         self.init_purchases()
         if initial_workbook is not None and not self.db.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
             self.import_workbook(initial_workbook)
@@ -216,6 +217,82 @@ class Store(Purchasing):
                     parts=[p.strip() for p in row['specification'].split(' · ',1)]
                     self.db.execute('UPDATE materials SET size=?,grammage=?,specification=? WHERE id=?',
                                     (parts[0],parts[1] if len(parts)>1 else '', '',row['id']))
+
+    def migrate_catalog(self):
+        # SQLite requires rebuilding the parent table to remove the old two-category CHECK.
+        sql=self.one("SELECT sql FROM sqlite_master WHERE type='table' AND name='materials'")['sql']
+        check="CHECK(category IN ('Produção','Embalagem'))"
+        if check in sql:
+            self.db.commit()
+            self.db.execute('PRAGMA foreign_keys=OFF')
+            try:
+                self.db.execute('BEGIN IMMEDIATE')
+                with self.db:
+                    indexes=self.all("SELECT sql FROM sqlite_master WHERE tbl_name='materials' AND sql IS NOT NULL AND type IN ('index','trigger')")
+                    self.db.execute(sql.replace('materials', 'materials_new', 1).replace(check,''))
+                    columns=','.join('"'+r['name']+'"' for r in self.all('PRAGMA table_info(materials)'))
+                    self.db.execute(f'INSERT INTO materials_new ({columns}) SELECT {columns} FROM materials')
+                    self.db.execute('DROP TABLE materials')
+                    self.db.execute('ALTER TABLE materials_new RENAME TO materials')
+                    for row in indexes:self.db.execute(row['sql'])
+                    if self.all('PRAGMA foreign_key_check'):
+                        raise ValueError('Falha na migração: referências inválidas no banco.')
+            finally:
+                self.db.execute('PRAGMA foreign_keys=ON')
+        with self.db:
+            self.db.execute("CREATE TABLE IF NOT EXISTS categories (kind TEXT NOT NULL, name TEXT NOT NULL COLLATE NOCASE, PRIMARY KEY(kind,name))")
+            for table in ('products','orders','recipes'):
+                columns={r['name'] for r in self.all(f'PRAGMA table_info({table})')}
+                if table=='products' and 'category' not in columns:
+                    self.db.execute("ALTER TABLE products ADD COLUMN category TEXT NOT NULL DEFAULT 'Sem categoria'")
+                if table=='orders' and 'customer_id' not in columns:
+                    self.db.execute('ALTER TABLE orders ADD COLUMN customer_id INTEGER')
+                if table=='recipes' and 'section' not in columns:
+                    self.db.execute("ALTER TABLE recipes ADD COLUMN section TEXT NOT NULL DEFAULT 'Produção'")
+                    self.db.execute("UPDATE recipes SET section='Embalagem' WHERE material_code IN (SELECT code FROM materials WHERE category='Embalagem')")
+            for kind in ('materials','products'):
+                self.db.execute('INSERT OR IGNORE INTO categories VALUES(?,?)',(kind,'Sem categoria'))
+                self.db.execute(f'INSERT OR IGNORE INTO categories SELECT ?,category FROM {kind}',(kind,))
+            for name in ('Produção','Embalagem'):
+                self.db.execute('INSERT OR IGNORE INTO categories VALUES(?,?)',('materials',name))
+
+    def categories(self,kind):
+        return [r['name'] for r in self.all('SELECT name FROM categories WHERE kind=? ORDER BY name COLLATE NOCASE',(kind,))]
+
+    def add_category(self,kind,name):
+        name=name.strip()
+        if kind not in ('materials','products') or not name:
+            raise ValueError('Informe o nome da categoria.')
+        with self.db:self.db.execute('INSERT OR IGNORE INTO categories VALUES(?,?)',(kind,name))
+        return name
+
+    def delete_category(self,kind,name):
+        if kind not in ('materials','products') or name.casefold()=='sem categoria':
+            raise ValueError('A categoria Sem categoria deve ser mantida.')
+        with self.db:
+            self.db.execute(f"UPDATE {kind} SET category='Sem categoria' WHERE category=? COLLATE NOCASE",(name,))
+            self.db.execute('DELETE FROM categories WHERE kind=? AND name=? COLLATE NOCASE',(kind,name))
+
+    def validate_category(self,kind,name):
+        row=self.one('SELECT name FROM categories WHERE kind=? AND name=? COLLATE NOCASE',(kind,name.strip()))
+        if not row:raise ValueError('Cadastre a categoria antes de selecioná-la.')
+        return row['name']
+
+    def available_code(self,kind,name,size='',grammage=''):
+        if kind not in ('products','materials'):raise ValueError('Cadastro inválido.')
+        base=automatic_code(name,size,grammage)
+        candidate=base;number=2
+        while self.one(f'SELECT 1 FROM {kind} WHERE code=? COLLATE NOCASE',(candidate,)):
+            candidate=f'{base}-{number:03d}';number+=1
+        return candidate
+
+    def duplicate_product(self,product_id):
+        p=self.one('SELECT * FROM products WHERE id=?',(product_id,))
+        if not p:raise ValueError('Produto não encontrado.')
+        return self.save_product(name=p['name']+' (cópia)',code=self.available_code('products',p['name'],p['size'],p['grammage']),
+            size=p['size'],grammage=p['grammage'],markup=p['markup'],table_cents=p['table_cents'],base_yield=p['base_yield'],
+            category=p['category'],recipe=[(r['material_code'],r['qty']) for r in self.recipe(product_id)],
+            sections=[r['section'] for r in self.recipe(product_id)])
 
     def close(self):
         self.db.close()
@@ -314,8 +391,7 @@ class Store(Purchasing):
         if price_date:
             try:date.fromisoformat(price_date)
             except ValueError:raise ValueError('Informe uma data válida para o preço.')
-        if category is not None and category not in ('Produção','Embalagem'):
-            raise ValueError('Selecione Produção ou Embalagem para a categoria do insumo.')
+        if category is not None:category=self.validate_category('materials',category)
         if variants is not None:
             cleaned=[v.strip() for v in variants if v.strip()]
             if len({v.casefold() for v in cleaned}) != len(cleaned):
@@ -376,7 +452,7 @@ class Store(Purchasing):
         price = int((Decimal(str(cost)) * Decimal(str(product['markup']))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
         return price, []
 
-    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None):
+    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name or not math.isfinite(markup) or markup < 1:
@@ -387,8 +463,12 @@ class Store(Purchasing):
             raise ValueError('O rendimento deve ser um número inteiro entre 1 e 1000000.')
         if not recipe:
             raise ValueError("Adicione ao menos um insumo à composição.")
+        if category is not None:category=self.validate_category('products',category)
+        if sections is not None and (len(sections)!=len(recipe) or any(v not in ('Produção','Embalagem') for v in sections)):
+            raise ValueError('Seção da composição inválida.')
         with self.db:
             if id:
+                if not self.one('SELECT 1 FROM products WHERE id=?',(id,)):raise ValueError('Produto não encontrado.')
                 self.db.execute("UPDATE products SET code=?,name=?,size=?,grammage=?,markup=?,table_cents=? WHERE id=?",
                                 (code,name,size,grammage,markup,table_cents,id))
                 self.db.execute("DELETE FROM recipes WHERE product_id=?", (id,))
@@ -397,10 +477,12 @@ class Store(Purchasing):
                                      (code,name,size,grammage,markup,table_cents)).lastrowid
             if base_yield is not None:
                 self.db.execute('UPDATE products SET base_yield=? WHERE id=?',(base_yield,id))
+            if category is not None:self.db.execute('UPDATE products SET category=? WHERE id=?',(category,id))
             for pos,(material_code,qty) in enumerate(recipe):
                 if not self.one("SELECT 1 FROM materials WHERE code=? COLLATE NOCASE", (material_code,)):
                     raise ValueError(f"Insumo não encontrado: {material_code}")
-                self.db.execute("INSERT INTO recipes VALUES(?,?,?,?)", (id,pos,material_code,qty))
+                section=sections[pos] if sections is not None else ('Embalagem' if self.one('SELECT category FROM materials WHERE code=? COLLATE NOCASE',(material_code,))['category']=='Embalagem' else 'Produção')
+                self.db.execute("INSERT INTO recipes(product_id,position,material_code,qty,section) VALUES(?,?,?,?,?)", (id,pos,material_code,qty,section))
         return id
 
     def toggle_product(self, id):
@@ -460,7 +542,7 @@ class Store(Purchasing):
             self.db.execute('DELETE FROM order_items WHERE order_id=?',(id,))
             self.db.execute('DELETE FROM orders WHERE id=?',(id,))
 
-    def save_order(self, *, id=None, customer, due_date, payment, production, notes, items, paid_cents=0):
+    def save_order(self, *, id=None, customer, due_date, payment, production, notes, items, paid_cents=0, customer_id=None):
         customer = customer.strip()
         if not customer or not items or not due_date:
             raise ValueError("Preencha cliente, entrega e ao menos um item.")
@@ -512,6 +594,17 @@ class Store(Purchasing):
                         raise ValueError(f"Variação inválida para {r['material_name']}.")
                     usage[(material_id,variant_id)]+=item['qty']*r['qty']/product['base_yield']
         with self.db:
+            if customer_id is not None:
+                match=self.one('SELECT * FROM customers WHERE id=?',(customer_id,))
+                if not match:raise ValueError('Cliente não encontrado. Selecione novamente.')
+            else:
+                matches=[c for c in self.customers() if ' '.join(c['name'].split()).casefold()==' '.join(customer.split()).casefold()]
+                if len(matches)>1:raise ValueError('Há clientes com o mesmo nome. Selecione o cadastro na lista.')
+                match=matches[0] if matches else None
+            if match:
+                customer_id=match['id'];customer=match['name']
+            else:
+                customer_id=self.db.execute('INSERT INTO customers(name) VALUES(?)',(customer,)).lastrowid
             if id:
                 self.db.execute("UPDATE orders SET customer=?,due_date=?,payment=?,paid_cents=?,production=?,notes=? WHERE id=?",
                                 (customer,due_date,payment,paid_cents,production,notes.strip(),id))
@@ -521,6 +614,7 @@ class Store(Purchasing):
                 id = self.db.execute("INSERT INTO orders(number,customer,created_date,due_date,payment,paid_cents,production,notes) VALUES(?,?,?,?,?,?,?,?)",
                                      (number,customer,date.today().isoformat(),due_date,payment,paid_cents,production,notes.strip())).lastrowid
                 self._remember_number(number)
+            self.db.execute('UPDATE orders SET customer_id=? WHERE id=?',(customer_id,id))
             for item in items:
                 item_id=self.db.execute("INSERT INTO order_items(order_id,product_id,description,qty,unit_cents) VALUES(?,?,?,?,?)",
                                         (id,item.get('product_id'),item['description'].strip(),item['qty'],item['unit_cents'])).lastrowid
@@ -699,7 +793,7 @@ class Store(Purchasing):
                     pos = 0
                     for idx in range(2,22,2):
                         if row[idx] and row[idx+1]:
-                            self.db.execute('INSERT INTO recipes VALUES(?,?,?,?)',
+                            self.db.execute('INSERT INTO recipes(product_id,position,material_code,qty) VALUES(?,?,?,?)',
                                             (pid,pos,str(row[idx]).strip().upper(),float(row[idx+1])))
                             pos += 1
                 for row in workbook['Pedidos'].iter_rows(min_row=2,max_col=8,values_only=True):

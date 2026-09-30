@@ -1,3 +1,30 @@
+## Build 5.2.0 — códigos, categorias, composição e clientes
+
+Base: build 5.1.1. Preserva o banco existente, sem limpeza automática.
+
+- Códigos sugeridos automaticamente em produtos e insumos, com edição manual.
+  Alterar o código de um insumo atualiza todas as composições na mesma transação.
+  Produtos conservam seu ID e seus vínculos com pedidos. Códigos repetidos são bloqueados.
+- Categorias cadastráveis/excluíveis em produtos e insumos. Ao excluir uma categoria,
+  os itens passam para **Sem categoria**. Filtros nas duas listagens.
+- **Duplicar produto** cria uma cópia independente com outro código e abre a edição.
+- Produção e Embalagem oferecem todos os insumos ativos, independentemente da categoria.
+  A seção escolhida fica gravada na composição, mesmo se a categoria do insumo mudar.
+- Pedidos pesquisam clientes cadastrados e permitem cadastro completo pelo botão **Novo**.
+  Um nome novo digitado diretamente é cadastrado ao salvar um pedido válido.
+  Nomes iguais são reutilizados, ignorando maiúsculas e espaços repetidos; homônimos
+  exigem seleção explícita, com telefone e ID na lista. Pedidos históricos conservam seu texto.
+
+Verificação: testes automatizados de banco e callbacks dos formulários, além de migração
+com um banco gerado pela versão 5.1.1, incluindo pedidos, variações e estoque.
+A validação visual e a compilação do EXE no Windows ainda precisam ser realizadas.
+
+Para compilar: `compilar_windows.bat`. Para publicar pelo GitHub Actions, execute
+**Compilar e publicar ERP** com a versão **5.2.0**, depois de integrar esta alteração.
+Esta alteração não dispara a publicação automática.
+
+---
+
 ## Build 5.1.1 — configurações, cálculo e formulários
 
 Esta versão **preserva o banco existente**. A chamada de limpeza automática da

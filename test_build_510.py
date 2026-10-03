@@ -131,7 +131,9 @@ class ProductFormTests(unittest.TestCase):
         import app
         from contextlib import ExitStack
         stack=ExitStack();self.addCleanup(stack.close)
-        self.fields={};self.actions={};self.combos=[];self.labels=[];self.helps=[]
+        self.fields={};self.actions={};self.combos=[];self.labels=[];self.helps=[];self.trees=[]
+        def tree(*a,**k):
+            w=Widget(*a,**k);self.trees.append(w);return w
         def field(parent,label,row,default='',col=0,**kwargs):
             var=kwargs.get('variable') or Variable();var.set(default)
             self.fields[label]=var
@@ -147,7 +149,7 @@ class ProductFormTests(unittest.TestCase):
             w=Widget();w.content=Widget();return w
         for target,replacement in [('tk.Frame',Widget),('tk.LabelFrame',Widget),('tk.Label',label),
                 ('tk.StringVar',Variable),('ttk.Combobox',combo),('ttk.Entry',Widget),('ttk.Scrollbar',Widget),
-                ('ScrollArea',area),('StripedTreeview',Widget),('field',field),('button',button),('help_icon',lambda *a:Widget())]:
+                ('ScrollArea',area),('StripedTreeview',tree),('field',field),('button',button),('help_icon',lambda *a:Widget())]:
             stack.enter_context(patch('app.'+target,replacement))
         self.ui=app.ERP.__new__(app.ERP);self.ui.store=self.store
         self.ui.modal=lambda *a:Widget();self.ui.render=lambda:None

@@ -113,9 +113,10 @@ def filter_orders(orders, filters):
 
 
 from purchasing import Purchasing
+from product_composition import ProductComposition
 
 
-class Store(Purchasing):
+class Store(Purchasing,ProductComposition):
     def __init__(self, path: str | Path, initial_workbook: str | Path | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,6 +186,7 @@ class Store(Purchasing):
         """)
         self.migrate_schema()
         self.migrate_catalog()
+        self.init_composition()
         self.init_purchases()
         if initial_workbook is not None and not self.db.execute("SELECT 1 FROM materials LIMIT 1").fetchone():
             self.import_workbook(initial_workbook)
@@ -292,7 +294,8 @@ class Store(Purchasing):
         return self.save_product(name=p['name']+' (cópia)',code=self.available_code('products',p['name'],p['size'],p['grammage']),
             size=p['size'],grammage=p['grammage'],markup=p['markup'],table_cents=p['table_cents'],base_yield=p['base_yield'],
             category=p['category'],recipe=[(r['material_code'],r['qty']) for r in self.recipe(product_id)],
-            sections=[r['section'] for r in self.recipe(product_id)])
+            sections=[r['section'] for r in self.recipe(product_id)],
+            components=[(r['component_id'],r['qty'],r['section']) for r in self.components(product_id)])
 
     def close(self):
         self.db.close()
@@ -364,7 +367,7 @@ class Store(Purchasing):
     def variant_requirements(self, product_id):
         """One choice for each material in a recipe that has active variations."""
         result=[];seen=set()
-        for part in self.recipe(product_id):
+        for part in self.expanded_recipe(product_id):
             m=self.one('SELECT id,name,code FROM materials WHERE code=? COLLATE NOCASE',(part['material_code'],))
             if m and m['id'] not in seen:
                 options=self.variants(m['id'],active_only=True)
@@ -429,7 +432,7 @@ class Store(Purchasing):
             self.db.execute("UPDATE materials SET active=1-active WHERE id=?", (id,))
 
     def products(self):
-        return self.all("SELECT * FROM products ORDER BY active DESC, name COLLATE NOCASE")
+        return self.all("SELECT * FROM products ORDER BY code COLLATE NOCASE,id")
 
     def recipe(self, product_id):
         return self.all("""SELECT r.*, m.name AS material_name, m.pack_qty, m.pack_cents, m.unit, m.category
@@ -437,12 +440,14 @@ class Store(Purchasing):
            WHERE r.product_id=? ORDER BY r.position""", (product_id,))
 
     def product_cost(self, product_id):
-        rows = self.recipe(product_id)
+        missing=[r['material_code'] for r in self.recipe(product_id) if r['material_name'] is None]
+        if missing:return None,missing
+        try:rows = self.expanded_recipe(product_id)
+        except ValueError as exc:return None,[str(exc)]
         missing = [r['material_code'] for r in rows if r['material_name'] is None]
         if not rows or missing:
             return None, missing
-        produced=self.one('SELECT base_yield FROM products WHERE id=?',(product_id,))['base_yield']
-        return sum(r['qty'] * r['pack_cents'] / r['pack_qty'] for r in rows)/produced, []
+        return sum(r['qty'] * r['pack_cents'] / r['pack_qty'] for r in rows), []
 
     def suggested(self, product):
         cost, missing = self.product_cost(product['id'])
@@ -452,7 +457,7 @@ class Store(Purchasing):
         price = int((Decimal(str(cost)) * Decimal(str(product['markup']))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
         return price, []
 
-    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None):
+    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None, components=None):
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name or not math.isfinite(markup) or markup < 1:
@@ -461,8 +466,14 @@ class Store(Purchasing):
             raise ValueError("Preço de tabela inválido.")
         if base_yield is not None and (not isinstance(base_yield,int) or isinstance(base_yield,bool) or not 1<=base_yield<=1000000):
             raise ValueError('O rendimento deve ser um número inteiro entre 1 e 1000000.')
-        if not recipe:
-            raise ValueError("Adicione ao menos um insumo à composição.")
+        components=list(components) if components is not None else ([(r['component_id'],r['qty'],r['section']) for r in self.components(id)] if id else [])
+        if not recipe and not components:
+            raise ValueError("Adicione ao menos um insumo ou produto à composição.")
+        for child,qty,section in components:
+            if child==id:raise ValueError('Um produto não pode conter ele mesmo.')
+            if not math.isfinite(qty) or not 0<qty<=1000000:raise ValueError('Quantidade de produto inválida.')
+            if section not in ('Produção','Embalagem'):raise ValueError('Seção da composição inválida.')
+            if not self.one('SELECT 1 FROM products WHERE id=?',(child,)):raise ValueError('Produto da composição não encontrado.')
         if category is not None:category=self.validate_category('products',category)
         if sections is not None and (len(sections)!=len(recipe) or any(v not in ('Produção','Embalagem') for v in sections)):
             raise ValueError('Seção da composição inválida.')
@@ -479,10 +490,15 @@ class Store(Purchasing):
                 self.db.execute('UPDATE products SET base_yield=? WHERE id=?',(base_yield,id))
             if category is not None:self.db.execute('UPDATE products SET category=? WHERE id=?',(category,id))
             for pos,(material_code,qty) in enumerate(recipe):
+                if not math.isfinite(qty) or not 0<qty<=1000000:raise ValueError('Quantidade de insumo inválida.')
                 if not self.one("SELECT 1 FROM materials WHERE code=? COLLATE NOCASE", (material_code,)):
                     raise ValueError(f"Insumo não encontrado: {material_code}")
                 section=sections[pos] if sections is not None else ('Embalagem' if self.one('SELECT category FROM materials WHERE code=? COLLATE NOCASE',(material_code,))['category']=='Embalagem' else 'Produção')
                 self.db.execute("INSERT INTO recipes(product_id,position,material_code,qty,section) VALUES(?,?,?,?,?)", (id,pos,material_code,qty,section))
+            self.db.execute('DELETE FROM product_components WHERE product_id=?',(id,))
+            for pos,(child,qty,section) in enumerate(components):
+                self.db.execute('INSERT INTO product_components(product_id,position,component_id,qty,section) VALUES(?,?,?,?,?)',(id,pos,child,qty,section))
+            if components:self.expanded_recipe(id)  # cycle/missing-child errors roll back the whole save
         return id
 
     def toggle_product(self, id):
@@ -575,7 +591,7 @@ class Store(Purchasing):
                 product=self.one('SELECT code,base_yield FROM products WHERE id=?',(item['product_id'],))
                 if not product:
                     raise ValueError('Produto do pedido não encontrado.')
-                recipe=self.recipe(item['product_id'])
+                recipe=self.expanded_recipe(item['product_id'])
                 if not recipe or any(r['material_name'] is None for r in recipe):
                     raise ValueError(f"Revise a composição do produto {product['code']} antes de registrar a retirada de estoque.")
                 selections={int(k):int(v) for k,v in (item.get('variants') or {}).items()}
@@ -592,7 +608,8 @@ class Store(Purchasing):
                             'SELECT 1 FROM material_variants WHERE id=? AND material_id=?',
                             (variant_id,material_id)):
                         raise ValueError(f"Variação inválida para {r['material_name']}.")
-                    usage[(material_id,variant_id)]+=item['qty']*r['qty']/product['base_yield']
+                    usage[(material_id,variant_id)]+=item['qty']*r['qty']
+                    if not math.isfinite(usage[(material_id,variant_id)]):raise ValueError('Quantidade total de insumos inválida.')
         with self.db:
             if customer_id is not None:
                 match=self.one('SELECT * FROM customers WHERE id=?',(customer_id,))

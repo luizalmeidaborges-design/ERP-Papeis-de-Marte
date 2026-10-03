@@ -1,3 +1,46 @@
+## Build 5.3.0 — edição de quantidades e produtos compostos
+
+Base: última build 5.2.0. Preserva dados e pedidos existentes; não executa limpeza.
+
+- **Editar quantidade:** selecione uma linha de Produção ou Embalagem e clique
+  em Editar quantidade, ou dê duplo clique. Aceita valores fracionários positivos.
+  Custo e preço sugerido são recalculados. Cancelar mantém a quantidade anterior;
+  a composição só é gravada ao salvar o produto.
+- **Ordenação:** a tabela e a lista de produtos usam Código em ordem alfabética,
+  sem diferenciar maiúsculas/minúsculas e sem separar ativos antes de inativos.
+- **Produto dentro de produto:** os seletores de Produção e Embalagem oferecem
+  insumos e produtos cadastrados, identificados pelos prefixos Insumo e Produto.
+  Informe quantas unidades do produto incluído são necessárias para compor o pai.
+  Produtos podem conter outros produtos em vários níveis. O custo é a soma dos
+  insumos finais; o preço de venda e o multiplicador do filho não são somados ao
+  custo do pai. O multiplicador geral é aplicado ao custo final para sugerir preço.
+- **Estoque:** ao salvar o pedido, a composição inteira é expandida em insumos.
+  Quantidades se multiplicam em cada nível e insumos repetidos são somados. As
+  variações dos insumos internos também são solicitadas, uma escolha por insumo
+  em cada item de pedido, aplicada a todas as ocorrências desse insumo.
+- Ao editar quantidades/itens de um pedido, o consumo anterior é estornado e a
+  composição atual é aplicada. Alterar apenas pagamento não recalcula o estoque.
+  Excluir o pedido devolve o que foi efetivamente retirado, mesmo após mudança
+  na composição. Cadastros e pedidos históricos não são recalculados na migração.
+- Inclusão circular, direta ou indireta, é bloqueada. Composição incompleta
+  bloqueia o consumo de estoque. Alterar códigos mantém os vínculos por ID;
+  duplicar um produto copia suas linhas e os vínculos com produtos componentes.
+
+Exemplo: um kit contém 3 cadernos; cada caderno usa 2 folhas. Um pedido de
+2 kits retira 12 folhas, além dos outros insumos e embalagens de toda a composição.
+
+Validação: 69 testes executados, 59 aprovados e 10 ignorados por dependerem da
+planilha privada ausente. Cobrem três níveis, insumos repetidos, rendimento legado,
+cores, edição de quantidades, renomeação, duplicação, ciclos, migração e estorno.
+Os callbacks da interface foram testados sem display; validação visual Windows
+e compilação ainda devem ser realizadas.
+
+Para compilar: `compilar_windows.bat` ou Actions → Compilar e publicar ERP →
+Run workflow → branch `main` → versão **5.3.0**. Este commit não publica Release
+nem altera `release-version.txt`.
+
+---
+
 ## Build 5.2.0 — códigos, categorias, composição e clientes
 
 Base: build 5.1.1. Preserva o banco existente, sem limpeza automática.

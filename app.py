@@ -709,20 +709,27 @@ class ERP(PurchaseUI):
                     help_text='Preenchido com custo × multiplicador geral. Você pode ajustar antes de salvar. Alterar insumos recalcula este campo. O valor salvo será usado nos novos pedidos.')
         tk.Label(content,text='COMPOSIÇÃO • insumos necessários para 1 produto',bg=SURFACE,fg=OLIVE,
                  font=(BODY,10,'bold')).pack(anchor='w',padx=26,pady=(16,5))
-        entries=[(r['material_code'],r['qty'],r['section']) for r in self.store.recipe(p['id'])] if p else []
+        entries=[('material',r['material_code'],r['qty'],r['section']) for r in self.store.recipe(p['id'])] if p else []
+        if p:entries.extend(('product',r['component_id'],r['qty'],r['section']) for r in self.store.components(p['id']))
         panels=tk.Frame(content,bg=SURFACE);panels.pack(fill='both',expand=True,padx=20,pady=5)
         panels.columnconfigure(0,weight=1);panels.columnconfigure(1,weight=1);panels.rowconfigure(0,weight=1)
-        trees={};selectors={};mappings={}
+        trees={};selectors={};mappings={};editors={}
         def redraw(recalculate=True):
             running=0;missing=[]
             for tree in trees.values():tree.delete(*tree.get_children())
-            for i,(material_code,amount,category) in enumerate(entries):
-                m=self.store.one('SELECT * FROM materials WHERE code=? COLLATE NOCASE',(material_code,))
-                value=amount*m['pack_cents']/m['pack_qty'] if m else None
-                if value is None:missing.append(material_code)
+            for i,(kind,reference,amount,category) in enumerate(entries):
+                if kind=='material':
+                    m=self.store.one('SELECT * FROM materials WHERE code=? COLLATE NOCASE',(reference,))
+                    value=amount*m['pack_cents']/m['pack_qty'] if m else None
+                    label=f"Insumo · {reference} · {m['name']}" if m else str(reference)+' · NÃO ENCONTRADO'
+                else:
+                    m=self.store.one('SELECT * FROM products WHERE id=?',(reference,))
+                    unit_cost,issues=self.store.product_cost(reference)
+                    value=amount*unit_cost if unit_cost is not None else None
+                    label=f"Produto · {m['code']} · {m['name']}" if m else 'Produto não encontrado'
+                if value is None:missing.append(label)
                 else:running+=value
-                trees[category].insert('',tk.END,iid=str(i),values=(f"{material_code} · {m['name']}" if m else material_code+' · NÃO ENCONTRADO',
-                                                         fmt_qty(amount),money(round(value)) if value is not None else 'Revisar'))
+                trees[category].insert('',tk.END,iid=str(i),values=(label,fmt_qty(amount),money(round(value)) if value is not None else 'Revisar'))
             if missing:
                 total_label.configure(text='Corrija os insumos: '+', '.join(missing));return
             from decimal import Decimal, ROUND_HALF_UP
@@ -735,17 +742,21 @@ class ERP(PurchaseUI):
             for category in mappings:mappings[category].clear()
             for m in self.store.materials():
                 if not m['active']:continue
-                label=f"{m['code']} · {m['name']} ({m['size']} {m['grammage']})"
+                label=f"Insumo · {m['code']} · {m['name']} ({m['size']} {m['grammage']})"
                 for section in mappings:
-                    mappings[section][label]=m['code']
+                    mappings[section][label]=('material',m['code'])
                     if m['id']==saved_id:selectors[section].set(label)
+            for child in self.store.products():
+                if not child['active'] or (p and child['id']==p['id']):continue
+                label=f"Produto · {child['code']} · {child['name']}"
+                for section in mappings:mappings[section][label]=('product',child['id'])
             for category,combo in selectors.items():combo.configure(values=list(mappings[category]))
             if saved_id is not None:win.grab_set();redraw()
         for col,category in enumerate(('Produção','Embalagem')):
             panel=tk.LabelFrame(panels,text=category,bg=SURFACE,fg=OLIVE,font=(BODY,11,'bold'))
             panel.grid(row=0,column=col,sticky='nsew',padx=5)
             choice=tk.Frame(panel,bg=SURFACE);choice.pack(fill='x',padx=8,pady=8)
-            help_icon(choice,'Selecione qualquer insumo para '+category+', independente da categoria. O custo usa o preço e a quantidade da embalagem cadastrados em Insumos.').pack(side='right',padx=(5,0))
+            help_icon(choice,'Selecione um insumo ou produto para '+category+'. Produtos são identificados pelo prefixo Produto. Seu custo e estoque consideram todos os insumos internos, inclusive de outros produtos.').pack(side='right',padx=(5,0))
             combo=ttk.Combobox(choice,state='normal',width=34);combo.pack(side='left',fill='x',expand=True)
             selectors[category]=combo;mappings[category]={}
             def search(_=None,c=category):
@@ -759,28 +770,45 @@ class ERP(PurchaseUI):
             def add(c=category,q=qty):
                 try:
                     label=selectors[c].get()
-                    if label not in mappings[c]:raise ValueError('Busque e selecione um insumo da lista.')
-                    entries.append((mappings[c][label],quantity(q.get()),c));redraw()
+                    if label not in mappings[c]:raise ValueError('Busque e selecione um insumo ou produto da lista.')
+                    kind,reference=mappings[c][label]
+                    entries.append((kind,reference,quantity(q.get()),c));redraw()
                 except ValueError as exc:self.fail(exc,win)
             button(row,'Adicionar',add,False).pack(side='left',padx=3)
             button(row,'Novo insumo',lambda c=category:self.material_dialog(parent=win,on_saved=refresh_materials,default_category=c),False).pack(side='left',padx=3)
             box=tk.Frame(panel,bg=SURFACE);box.pack(fill='both',expand=True,padx=8,pady=5)
-            tree=StripedTreeview(box,columns=('Insumo','Qtd','Custo'),show='headings',height=5);trees[category]=tree
-            for column,width in [('Insumo',245),('Qtd',55),('Custo',105)]:tree.heading(column,text=column);tree.column(column,width=width,minwidth=45)
+            tree=StripedTreeview(box,columns=('Insumo / produto','Qtd','Custo'),show='headings',height=5);trees[category]=tree
+            for column,width in [('Insumo / produto',245),('Qtd',55),('Custo',105)]:tree.heading(column,text=column);tree.column(column,width=width,minwidth=45)
             tree.pack(side='left',fill='both',expand=True)
             scroll=ttk.Scrollbar(box,orient='vertical',command=tree.yview);scroll.pack(side='right',fill='y');tree.configure(yscrollcommand=scroll.set)
             def remove(c=category):
                 selected=trees[c].selection()
                 if selected:entries.pop(int(selected[0]));redraw()
-            button(panel,'Remover selecionado',remove,False).pack(anchor='e',padx=8,pady=5)
+            def edit_quantity(c=category):
+                selected=trees[c].selection()
+                if not selected:
+                    messagebox.showinfo('Selecione uma linha','Selecione o insumo ou produto cuja quantidade deseja editar.',parent=win);return
+                index=int(selected[0]);kind,reference,old_qty,section=entries[index]
+                value=simpledialog.askstring('Editar quantidade','Quantidade usada na composição:',initialvalue=fmt_qty(old_qty),parent=win)
+                if value is None:return
+                try:
+                    entries[index]=(kind,reference,quantity(value),section)
+                    redraw();trees[c].selection_set(str(index))
+                except ValueError as exc:self.fail(exc,win)
+            tree.bind('<Double-1>',lambda _,c=category:editors[c]())
+            editors[category]=edit_quantity
+            actions=tk.Frame(panel,bg=SURFACE);actions.pack(fill='x',padx=8,pady=5)
+            button(actions,'Editar quantidade',edit_quantity,False).pack(side='left')
+            button(actions,'Remover selecionado',remove,False).pack(side='right')
         refresh_materials();redraw()
         if p and p['table_cents'] is not None:price_var.set(f"{p['table_cents']/100:.2f}".replace('.',','))
         def save():
             try:
                 self.store.save_product(id=p['id'] if p else None,code=code.get(),name=name.get(),
                     size=size.get(),grammage=gram.get(),markup=factor,
-                    table_cents=cents(price.get()),recipe=[(code,qty) for code,qty,section in entries],base_yield=1,
-                    sections=[section for code,qty,section in entries],category=category_field.get())
+                    table_cents=cents(price.get()),recipe=[(ref,qty) for kind,ref,qty,section in entries if kind=='material'],base_yield=1,
+                    sections=[section for kind,ref,qty,section in entries if kind=='material'],category=category_field.get(),
+                    components=[(ref,qty,section) for kind,ref,qty,section in entries if kind=='product'])
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')
@@ -1171,7 +1199,9 @@ class ERP(PurchaseUI):
             except Exception as exc:self.fail(exc,parent or self.root)
 
     def ask_variants(self,parent,product):
-        required=self.store.variant_requirements(product['id'])
+        try:required=self.store.variant_requirements(product['id'])
+        except ValueError as exc:
+            self.fail(exc,parent);return None
         if not required:return {}
         dialog=tk.Toplevel(parent)
         dialog.title('Escolha as variações dos insumos')
@@ -1357,7 +1387,10 @@ class ERP(PurchaseUI):
                 messagebox.showinfo('Item avulso','Esse item não usa a composição de um produto cadastrado.',parent=win)
                 return
             product=self.store.one('SELECT * FROM products WHERE id=?',(item['product_id'],))
-            if not self.store.variant_requirements(product['id']):
+            try:required=self.store.variant_requirements(product['id'])
+            except ValueError as exc:
+                self.fail(exc,win);return
+            if not required:
                 messagebox.showinfo('Sem variações','A composição deste produto não tem variações cadastradas.',parent=win)
                 return
             updated=self.ask_variants(win,product)

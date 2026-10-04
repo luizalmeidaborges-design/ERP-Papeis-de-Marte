@@ -421,8 +421,7 @@ class ERP(PurchaseUI):
         self.toolbar('Preço da embalagem ÷ quantidade = custo por unidade.',
                      [('Novo insumo',lambda:self.material_dialog(),True),
                       ('Editar',lambda:self.edit_material(),False),
-                      ('Ativar / inativar',lambda:self.toggle_material(),False),
-                      ('Excluir',self.delete_material,False)])
+                      ('Inativar / Excluir',lambda:self.manage_record('materials'),False)])
         filters=tk.Frame(self.main,bg=BG);filters.pack(fill='x',padx=26,pady=5)
         variables={}
         for i,(key,label) in enumerate((('name','Nome / código'),('size','Tamanho'),
@@ -472,6 +471,48 @@ class ERP(PurchaseUI):
         try:
             self.store.delete_material(id);self.render()
         except ValueError as exc:messagebox.showerror('Não foi possível excluir',str(exc),parent=self.root)
+
+    def manage_record(self, kind):
+        id=self.selection(self.tree)
+        if id is None:return
+        names={'materials':'insumo','products':'produto','orders':'pedido'}
+        if kind not in names:return
+        row=self.store.one(f'SELECT * FROM {kind} WHERE id=?',(id,))
+        if row is None:
+            messagebox.showerror('Registro não encontrado','Atualize a lista.',parent=self.root)
+            return
+        name=(row['number']+' · '+row['customer']) if kind=='orders' else row['code']+' · '+row['name']
+        state_action='Inativar' if row['active'] else 'Reativar'
+        win=tk.Toplevel(self.root);win.title('O que deseja fazer?');win.configure(bg=SURFACE)
+        win.transient(self.root);win.grab_set();win.resizable(False,False)
+        tk.Label(win,text='⚠ O que deseja fazer?',bg=SURFACE,fg=RED,font=(HEADING,18,'bold')).pack(padx=24,pady=(20,8))
+        tk.Label(win,text=name,bg=SURFACE,fg=OLIVE,wraplength=440).pack(padx=24,pady=8)
+        archive=('Inativar arquiva o pedido e o retira do calendário e das entregas pendentes. '
+                 'Não cancela a venda: valores e movimentações de estoque são mantidos.') if kind=='orders' else (
+                 'Inativar retira o cadastro das novas seleções e mantém seus vínculos e histórico.')
+        deletion=('Excluir remove o pedido dos relatórios e devolve ao estoque os insumos retirados automaticamente. '
+                  'O histórico das movimentações é preservado.') if kind=='orders' else (
+                  'Excluir apaga definitivamente o cadastro. Só é permitido quando não há vínculos ou histórico.')
+        text=archive+'\nVocê pode reativar depois.\n\n'+deletion
+        if not row['active']:text='Reativar disponibiliza novamente este registro.\n\n'+deletion
+        tk.Label(win,text=text,bg=SURFACE,fg=OLIVE,wraplength=440,justify='left').pack(padx=24,pady=12)
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(fill='x',padx=20,pady=20)
+        def act(delete=False):
+            if delete and not messagebox.askyesno('Confirmar exclusão',
+                    f'Excluir definitivamente {names[kind]}: {name}?\n\n'+deletion,
+                    parent=win,default='no',icon='warning'):return
+            try:
+                action={'materials':(self.store.toggle_material,self.store.delete_material),
+                        'products':(self.store.toggle_product,self.store.delete_product),
+                        'orders':(self.store.toggle_order,self.store.delete_order)}[kind][int(delete)]
+                action(id)
+            except (ValueError,sqlite3.IntegrityError) as exc:
+                messagebox.showerror('Não foi possível concluir',str(exc),parent=win)
+                return
+            win.destroy();self.render()
+        button(footer,'Cancelar',win.destroy,False).pack(side='left',padx=4)
+        button(footer,state_action,lambda:act(),False).pack(side='left',padx=4)
+        button(footer,'Excluir',lambda:act(True),True).pack(side='left',padx=4)
 
     def modal(self,title,width=670,height=530):
         win=tk.Toplevel(self.root);win.title(title);win.configure(bg=SURFACE)
@@ -641,7 +682,7 @@ class ERP(PurchaseUI):
         self.toolbar('Preço calculado = custo × multiplicador. Preço de venda = valor salvo no cadastro.',
                      [('Novo produto',lambda:self.product_dialog(),True),
                       ('Editar',self.edit_product,False),('Duplicar produto',self.duplicate_product,False),
-                      ('Ativar / inativar',self.toggle_product,False)])
+                      ('Inativar / Excluir',lambda:self.manage_record('products'),False)])
         self.filter_bar()
         bar=tk.Frame(self.main,bg=BG);bar.pack(fill='x',padx=26,pady=4)
         tk.Label(bar,text='Categoria:',bg=BG,fg=MUTED).pack(side='left')
@@ -961,7 +1002,7 @@ class ERP(PurchaseUI):
         month=self.calendar_month
         by_day={}
         for order in self.store.orders():
-            if order['due_date'] and order['due_date'].startswith(month.strftime('%Y-%m-')):
+            if order['active'] and order['due_date'] and order['due_date'].startswith(month.strftime('%Y-%m-')):
                 day=int(order['due_date'][8:])
                 by_day.setdefault(day,[]).append(order)
         controls=tk.Frame(self.main,bg=BG)
@@ -1007,7 +1048,7 @@ class ERP(PurchaseUI):
         for o in by_day.get(selected.day,[]) if selected.year==month.year and selected.month==month.month else []:
             self.calendar_tree.insert('',tk.END,iid=str(o['id']),values=(o['number'],o['customer'],
                o['payment'],o['production'],money(o['total_cents']) if not o['unpriced'] else 'A definir',
-               money(o['remaining_cents'])))
+               money(o['remaining_cents']),'Ativo' if o['active'] else 'Inativo'))
         def open_order(_=None):
             if self.calendar_tree.selection():
                 self.order_dialog(self.store.order(int(self.calendar_tree.selection()[0])))
@@ -1022,13 +1063,13 @@ class ERP(PurchaseUI):
         self.toolbar('Gerencie pedidos e comprovantes.',
                      [('Novo pedido',lambda:self.order_dialog(),True),('Editar',lambda:self.edit_order(),False),
                       ('Gerar PDF',lambda:self.pdf_selected(),False),
-                      ('Excluir pedido',self.delete_selected_order,False)])
+                      ('Inativar / Excluir',lambda:self.manage_record('orders'),False)])
         panel=tk.Frame(self.main,bg=CREAM)
         panel.pack(fill='x',padx=26,pady=(3,8))
         specs=[('number','Nº'),('customer','Cliente'),('items','Itens'),('created','Criado'),('due','Entrega'),
                ('payment','Pagamento'),('production','Produção'),('min_total','Total mínimo (R$)'),
                ('max_total','Total máximo (R$)'),('min_remaining','Restante mínimo (R$)'),
-               ('max_remaining','Restante máximo (R$)')]
+               ('max_remaining','Restante máximo (R$)'),('state','Estado')]
         orders=self.store.orders()
         for index,(key,title) in enumerate(specs):
             row,col=divmod(index,5)
@@ -1037,10 +1078,10 @@ class ERP(PurchaseUI):
             box.grid(row=row,column=col,sticky='ew',padx=7,pady=(5,7))
             tk.Label(box,text=title,bg=CREAM,fg=OLIVE,font=(BODY,9,'bold')).pack(anchor='w')
             if key not in self.order_filters:
-                self.order_filters[key]=tk.StringVar(value='Todos' if key in ('payment','production') else '')
+                self.order_filters[key]=tk.StringVar(value='Todos' if key in ('payment','production','state') else '')
                 self.order_filters[key].trace_add('write',lambda *_:self.update_order_results())
-            if key in ('payment','production'):
-                choices=['Todos']+sorted({o[key] for o in orders if o[key]})
+            if key in ('payment','production','state'):
+                choices=['Todos','Ativo','Inativo'] if key=='state' else ['Todos']+sorted({o[key] for o in orders if o[key]})
                 input_widget=ttk.Combobox(box,textvariable=self.order_filters[key],values=choices,state='readonly',width=14)
             else:
                 input_widget=ttk.Entry(box,textvariable=self.order_filters[key],width=17)
@@ -1048,8 +1089,8 @@ class ERP(PurchaseUI):
         button(panel,'Limpar filtros',self.clear_order_filters,False).grid(row=2,column=4,sticky='e',padx=8,pady=5)
         self.filter_count=tk.Label(self.main,text='',bg=BG,fg=MUTED,font=(BODY,9))
         self.filter_count.pack(anchor='w',padx=28)
-        self.tree=grid(self.main,('Nº','Cliente','Itens','Criado','Entrega','Pagamento','Produção','Total','Restante'),
-                       (90,145,245,92,100,105,115,95,95))
+        self.tree=grid(self.main,('Nº','Cliente','Itens','Criado','Entrega','Pagamento','Produção','Total','Restante','Estado'),
+                       (90,145,245,92,100,105,115,95,95,80))
         for column in self.tree['columns']:self.tree.column(column,stretch=False)
         self.update_order_results()
         self.tree.bind('<Double-1>',lambda _:self.edit_order())
@@ -1072,7 +1113,7 @@ class ERP(PurchaseUI):
         except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,self.root)
 
     def clear_order_filters(self):
-        for key,var in self.order_filters.items():var.set('Todos' if key in ('payment','production') else '')
+        for key,var in self.order_filters.items():var.set('Todos' if key in ('payment','production','state') else '')
         self.update_order_results()
 
     def update_order_results(self):
@@ -1085,12 +1126,14 @@ class ERP(PurchaseUI):
             self.filter_count.configure(text='Digite um valor válido nos filtros de total.')
             return
         orders=filter_orders(self.store.orders(),values)
+        if values.get('state'):
+            orders=[o for o in orders if ('Ativo' if o['active'] else 'Inativo')==values['state']]
         self.tree.delete(*self.tree.get_children())
         for o in orders:
             self.tree.insert('',tk.END,iid=str(o['id']),values=(o['number'],o['customer'],o['descriptions'],
                 br_date(o['created_date']),br_date(o['due_date']),o['payment'],o['production'],
                 money(o['total_cents']) if not o['unpriced'] else 'A definir',
-                money(o['remaining_cents'])))
+                money(o['remaining_cents']),'Ativo' if o['active'] else 'Inativo'))
         self.filter_count.configure(text=f'{len(orders)} pedido(s) exibido(s)')
 
     def report_page(self):

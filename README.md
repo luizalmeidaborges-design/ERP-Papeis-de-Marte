@@ -1,3 +1,26 @@
+## Build 5.4.0 — Inativar / Excluir
+
+Nas abas Pedidos, Produtos e Insumos, selecione uma linha e clique em
+**Inativar / Excluir**. A janela explica as consequências e oferece Cancelar,
+Inativar (ou Reativar para registros inativos) e Excluir. Excluir exige uma
+segunda confirmação, com Não como padrão.
+
+- Inativar preserva os dados e vínculos. Pedidos inativos são arquivados:
+  continuam nos relatórios financeiros, sem estorno do estoque, mas não aparecem
+  no calendário nem nas entregas pendentes do início. Use Estado na aba Pedidos
+  para localizar ativos ou inativos; Todos mostra ambos.
+- Excluir pedido remove seus valores dos relatórios e estorna a retirada
+  automática dos insumos, mantendo o histórico das movimentações.
+- Produtos presentes em pedidos ou na composição de outros produtos não podem
+  ser excluídos. Insumos com composição ou histórico também ficam protegidos.
+  Nesses casos, use Inativar.
+- Migração preserva a base existente e marca pedidos antigos como ativos.
+
+Validação: 74 testes executados, 64 aprovados e 10 ignorados por dependerem da
+planilha privada de importação ausente. Interface Windows não testada visualmente.
+Código preparado para compilação manual; release-version.txt não foi alterado.
+No workflow manual, informe a versão **5.4.0**.
+
 ## Build 5.3.0 — edição de quantidades e produtos compostos
 
 Base: última build 5.2.0. Preserva dados e pedidos existentes; não executa limpeza.

@@ -195,6 +195,8 @@ class Store(Purchasing,ProductComposition):
         """Add fields without resetting a database already in use."""
         with self.db:
             order_columns={r['name'] for r in self.all('PRAGMA table_info(orders)')}
+            if 'active' not in order_columns:
+                self.db.execute('ALTER TABLE orders ADD COLUMN active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1))')
             if 'paid_cents' not in order_columns:
                 self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
@@ -505,6 +507,25 @@ class Store(Purchasing,ProductComposition):
         with self.db:
             self.db.execute("UPDATE products SET active=1-active WHERE id=?", (id,))
 
+    def delete_product(self, id):
+        """Only unused products may be deleted; referenced products can be inactivated."""
+        with self.db:
+            if not self.one('SELECT id FROM products WHERE id=?',(id,)):
+                raise ValueError('Produto não encontrado.')
+            if (self.one('SELECT 1 FROM order_items WHERE product_id=? LIMIT 1',(id,)) or
+                    self.one('SELECT 1 FROM product_components WHERE component_id=? LIMIT 1',(id,))):
+                raise ValueError('Este produto está em pedidos ou na composição de outro produto. Escolha Inativar para preservar o histórico.')
+            self.db.execute('DELETE FROM recipes WHERE product_id=?',(id,))
+            self.db.execute('DELETE FROM product_components WHERE product_id=?',(id,))
+            self.db.execute('DELETE FROM products WHERE id=?',(id,))
+
+    def toggle_order(self, id):
+        # Archival is not cancellation: preserve the financial and stock history.
+        with self.db:
+            if not self.order(id):
+                raise ValueError('Pedido não encontrado.')
+            self.db.execute('UPDATE orders SET active=1-active WHERE id=?',(id,))
+
     def order(self, id):
         return self.one("SELECT * FROM orders WHERE id=?", (id,))
 
@@ -740,10 +761,10 @@ class Store(Purchasing,ProductComposition):
             'materials': self.one('SELECT COUNT(*) FROM materials WHERE active=1')[0],
             'products': self.one('SELECT COUNT(*) FROM products WHERE active=1')[0],
             'orders': len(orders),
-            'open': sum(o['production'] != 'Entregue' for o in orders),
+            'open': sum(o['active'] and o['production'] != 'Entregue' for o in orders),
             'revenue': sum(o['total_cents'] or 0 for o in orders if not o['unpriced']),
             'mean_item_price': self.one('SELECT ROUND(SUM(qty*unit_cents)*1.0/SUM(qty)) FROM order_items WHERE unit_cents IS NOT NULL')[0],
-            'due': [o for o in orders if o['production'] != 'Entregue'][:8]
+            'due': [o for o in orders if o['active'] and o['production'] != 'Entregue'][:8]
         }
 
     def backup(self, destination):

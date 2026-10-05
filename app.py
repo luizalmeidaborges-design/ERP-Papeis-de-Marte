@@ -742,6 +742,14 @@ class ERP(PurchaseUI):
                    help_text='Gramatura do papel em g/m², por exemplo 150. Opcional; não altera o custo sozinha.')
         self.bind_code_suggestion(code,(name_var,size_var,gram_var),'products',bool(p))
         category_field=self.category_picker(body,'products',6,p['category'] if p else 'Sem categoria')
+        measurements={}
+        for key,label,row,col,help_text in (
+                ('weight_g','PESO (g)',8,0,'Peso do produto cadastrado, em gramas. Ex.: 250,5. Opcional; não altera o custo.'),
+                ('height_cm','ALTURA (cm)',8,1,'Altura do produto, em centímetros. Ex.: 3,5. Opcional.'),
+                ('width_cm','LARGURA (cm)',10,0,'Largura do produto, em centímetros. Ex.: 15. Opcional.'),
+                ('length_cm','COMPRIMENTO (cm)',10,1,'Comprimento do produto, em centímetros. Ex.: 21. Opcional.')):
+            value=fmt_qty(p[key]) if p and p[key] is not None else ''
+            measurements[key]=field(body,label,row,value,col,help_text=help_text)
         factor=self.store.cost_multiplier()
         tk.Label(body,text=f'Multiplicador geral: {factor:g} • ajuste na engrenagem ⚙',bg=SURFACE,fg=MUTED,
                  wraplength=360,justify='left').grid(row=5,column=0,sticky='w',padx=10)
@@ -849,7 +857,8 @@ class ERP(PurchaseUI):
                     size=size.get(),grammage=gram.get(),markup=factor,
                     table_cents=cents(price.get()),recipe=[(ref,qty) for kind,ref,qty,section in entries if kind=='material'],base_yield=1,
                     sections=[section for kind,ref,qty,section in entries if kind=='material'],category=category_field.get(),
-                    components=[(ref,qty,section) for kind,ref,qty,section in entries if kind=='product'])
+                    components=[(ref,qty,section) for kind,ref,qty,section in entries if kind=='product'],
+                    measurements={key:entry.get() for key,entry in measurements.items()})
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')

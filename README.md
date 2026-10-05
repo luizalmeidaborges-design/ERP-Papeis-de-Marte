@@ -1,3 +1,16 @@
+## Build 5.4.1 — peso e dimensões do produto
+
+Cadastro e edição de produtos agora incluem Peso (g), Altura (cm), Largura (cm)
+e Comprimento (cm), com ajuda em cada campo. São opcionais; deixe em branco
+quando não houver informação. Aceitam decimais com vírgula ou ponto e rejeitam
+zero, negativos ou valores inválidos. Não alteram custos, preços nem estoque.
+As medidas são mantidas ao editar e copiadas ao duplicar o produto. Produtos
+existentes começam com esses campos vazios, preservando os demais dados.
+O formulário mantém rolagem e o botão Salvar no rodapé fixo.
+
+Código preparado para compilação manual como **5.4.1**. O arquivo
+release-version.txt permanece inalterado, sem disparar publicação automática.
+
 ## Build 5.4.0 — Inativar / Excluir
 
 Nas abas Pedidos, Produtos e Insumos, selecione uma linha e clique em

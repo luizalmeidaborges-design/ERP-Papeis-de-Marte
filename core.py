@@ -201,6 +201,9 @@ class Store(Purchasing,ProductComposition):
                 self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
             product_columns={r['name'] for r in self.all('PRAGMA table_info(products)')}
+            for name in ('weight_g','height_cm','width_cm','length_cm'):
+                if name not in product_columns:
+                    self.db.execute(f'ALTER TABLE products ADD COLUMN {name} REAL CHECK({name}>0 OR {name} IS NULL)')
             if 'category' not in material_columns:
                 self.db.execute("ALTER TABLE materials ADD COLUMN category TEXT NOT NULL DEFAULT 'Produção' CHECK(category IN ('Produção','Embalagem'))")
             if 'base_yield' not in product_columns:
@@ -297,7 +300,8 @@ class Store(Purchasing,ProductComposition):
             size=p['size'],grammage=p['grammage'],markup=p['markup'],table_cents=p['table_cents'],base_yield=p['base_yield'],
             category=p['category'],recipe=[(r['material_code'],r['qty']) for r in self.recipe(product_id)],
             sections=[r['section'] for r in self.recipe(product_id)],
-            components=[(r['component_id'],r['qty'],r['section']) for r in self.components(product_id)])
+            components=[(r['component_id'],r['qty'],r['section']) for r in self.components(product_id)],
+            measurements={key:p[key] for key in ('weight_g','height_cm','width_cm','length_cm')})
 
     def close(self):
         self.db.close()
@@ -459,7 +463,20 @@ class Store(Purchasing,ProductComposition):
         price = int((Decimal(str(cost)) * Decimal(str(product['markup']))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
         return price, []
 
-    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None, components=None):
+    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None, components=None, measurements=None):
+        clean_measurements={}
+        labels={'weight_g':'Peso (g)','height_cm':'Altura (cm)','width_cm':'Largura (cm)','length_cm':'Comprimento (cm)'}
+        for key,value in (measurements or {}).items():
+            if key not in labels:raise ValueError('Medida de produto desconhecida.')
+            if value is None or (isinstance(value,str) and not value.strip()):
+                clean_measurements[key]=None
+                continue
+            try:
+                number=float(str(value).strip().replace(',','.'))
+                if not math.isfinite(number) or number<=0:raise ValueError()
+            except (ValueError,TypeError,OverflowError):
+                raise ValueError(f'{labels[key]} deve ser um número maior que zero, ou deixe em branco.')
+            clean_measurements[key]=number
         name,size,grammage = name.strip(),size.strip(),grammage.strip()
         code = code.strip().upper() if code is not None else automatic_code(name,size,grammage)
         if not code or not name or not math.isfinite(markup) or markup < 1:
@@ -488,6 +505,8 @@ class Store(Purchasing,ProductComposition):
             else:
                 id = self.db.execute("INSERT INTO products(code,name,size,grammage,markup,table_cents) VALUES(?,?,?,?,?,?)",
                                      (code,name,size,grammage,markup,table_cents)).lastrowid
+            for key,value in clean_measurements.items():
+                self.db.execute(f'UPDATE products SET {key}=? WHERE id=?',(value,id))
             if base_yield is not None:
                 self.db.execute('UPDATE products SET base_yield=? WHERE id=?',(base_yield,id))
             if category is not None:self.db.execute('UPDATE products SET category=? WHERE id=?',(category,id))

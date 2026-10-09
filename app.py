@@ -721,6 +721,31 @@ class ERP(PurchaseUI):
         id=self.selection(self.tree)
         if id:self.store.toggle_product(id);self.render()
 
+    def product_notes_dialog(self,parent,initial,on_apply):
+        win=self.modal('Receita do Produto',850,650)
+        win.transient(parent)
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=22,pady=14)
+        tk.Label(win,text='Anote folhas, medidas de corte, rendimento e etapas de montagem.\n'
+                 'Exemplo: 1 folha A4 → cortar 6 peças → colar → embalar.\n'
+                 'Após aplicar, clique em Salvar produto para gravar a receita.',
+                 bg=SURFACE,fg=MUTED,justify='left',wraplength=720).pack(anchor='w',padx=22,pady=10)
+        frame=tk.Frame(win,bg=SURFACE);frame.pack(fill='both',expand=True,padx=22,pady=8)
+        editor=tk.Text(frame,wrap='word',undo=True,font=(BODY,12),bg='white',fg=OLIVE,padx=12,pady=12)
+        scroll=ttk.Scrollbar(frame,orient='vertical',command=editor.yview)
+        scroll.pack(side='right',fill='y');editor.pack(side='left',fill='both',expand=True)
+        editor.configure(yscrollcommand=scroll.set);editor.insert('1.0',initial)
+        def close():
+            win.destroy();parent.grab_set()
+        def cancel():
+            if editor.get('1.0','end-1c')!=initial and not messagebox.askyesno(
+                    'Descartar alterações?','Descartar as alterações feitas nesta receita?',parent=win,default='no'):return
+            close()
+        def apply():
+            on_apply(editor.get('1.0','end-1c'));close()
+        button(footer,'Cancelar',cancel,False).pack(side='left')
+        button(footer,'Aplicar ao produto',apply,True).pack(side='right')
+        win.protocol('WM_DELETE_WINDOW',cancel);editor.focus_set()
+
     def product_dialog(self,p=None):
         win=self.modal('Editar produto' if p else 'Novo produto',1000,820)
         footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=24,pady=12)
@@ -750,6 +775,10 @@ class ERP(PurchaseUI):
                 ('length_cm','COMPRIMENTO (cm)',10,1,'Comprimento do produto, em centímetros. Ex.: 21. Opcional.')):
             value=fmt_qty(p[key]) if p and p[key] is not None else ''
             measurements[key]=field(body,label,row,value,col,help_text=help_text)
+        notes={'text':p['production_notes'] if p else ''}
+        def apply_notes(text):notes['text']=text
+        button(body,'Receita do Produto',
+               lambda:self.product_notes_dialog(win,notes['text'],apply_notes),False).grid(row=4,column=0,sticky='w',padx=10,pady=4)
         factor=self.store.cost_multiplier()
         tk.Label(body,text=f'Multiplicador geral: {factor:g} • ajuste na engrenagem ⚙',bg=SURFACE,fg=MUTED,
                  wraplength=360,justify='left').grid(row=5,column=0,sticky='w',padx=10)
@@ -858,7 +887,7 @@ class ERP(PurchaseUI):
                     table_cents=cents(price.get()),recipe=[(ref,qty) for kind,ref,qty,section in entries if kind=='material'],base_yield=1,
                     sections=[section for kind,ref,qty,section in entries if kind=='material'],category=category_field.get(),
                     components=[(ref,qty,section) for kind,ref,qty,section in entries if kind=='product'],
-                    measurements={key:entry.get() for key,entry in measurements.items()})
+                    measurements={key:entry.get() for key,entry in measurements.items()},production_notes=notes['text'])
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')

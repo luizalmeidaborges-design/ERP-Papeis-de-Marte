@@ -1,3 +1,20 @@
+## Versão 6.0.0 — Receita do Produto
+
+No cadastro ou edição de um produto, o botão **Receita do Produto**, abaixo de
+Tamanho e acima do multiplicador, abre um bloco de anotações exclusivo daquele
+produto. Registre folhas, medidas de corte, rendimento, montagem e embalagem.
+Aceita texto livre, várias linhas e sequências como “Cortar → Colar → Embalar”.
+
+Clique em **Aplicar ao produto**, depois em **Salvar produto**, para gravar.
+Cancelar ou fechar o bloco pede confirmação se houver alterações e mantém o
+texto anterior. Ao duplicar um produto, sua receita também é copiada. Produtos
+antigos começam com a receita vazia, preservando todos os demais dados.
+Estas instruções são informativas e não alteram os cálculos nem o estoque.
+O bloco possui rolagem, desfazer com Ctrl+Z e botões fixos no rodapé.
+
+Código preparado para compilação manual como **6.0.0**; release-version.txt
+permanece inalterado, sem disparar publicação automática.
+
 ## Build 5.4.1 — peso e dimensões do produto
 
 Cadastro e edição de produtos agora incluem Peso (g), Altura (cm), Largura (cm)

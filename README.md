@@ -1,3 +1,18 @@
+## Versão 6.1.1 — janela da receita, unidades e coluna Acabamento
+
+- Receita: Aplicar ao produto e Cancelar agora ficam no topo, fora da área de
+  texto. Editor menor, com rolagem e expansão conforme o tamanho da janela.
+  Janela comum do Windows, redimensionável, com minimizar, maximizar/restaurar
+  e fechar. Após aplicar, use Salvar produto para gravar as alterações.
+- Peso exibido e informado em kg; altura, largura e comprimento em metros.
+  Exemplos: 250 g aparecem como 0,25 kg; 13 cm aparecem como 0,13 m.
+  O banco mantém as unidades originais e a conversão ocorre na interface,
+  evitando alterar a dimensão real dos produtos já cadastrados.
+- Coluna Acabamento na tabela de produtos; a busca também encontra esse texto.
+
+Compilação manual: versão **6.1.1**. Dados existentes preservados.
+release-version.txt não alterado; publicação automática não disparada.
+
 ## Versão 6.1.0 — formatação da receita e acabamento
 
 - Receita do Produto: selecione texto e use **Negrito** (também Ctrl+B) ou

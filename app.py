@@ -14,6 +14,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from automatic_backup import AutomaticBackup
+from measurement_units import display_measurement, stored_measurement
 from core import (Store, asset, automatic_code, br_date, cents, data_directory,
                   export_order_pdf, export_report_pdf, filter_orders, fmt_qty, money, parse_date, quantity)
 from updater import check_and_stage, launch_cached, read_config
@@ -691,16 +692,16 @@ class ERP(PurchaseUI):
         category.set(selected if selected in self.store.categories('products') else 'Todas');category.pack(side='left',padx=8)
         def change(_):self.product_category=category.get();self.render()
         category.bind('<<ComboboxSelected>>',change)
-        self.tree=grid(self.main,('Código','Produto','Categoria','Tamanho','Gramatura','Custo total','Preço de venda','Média vendida','Estado'),
-                       (95,240,130,82,80,110,120,110,75))
+        self.tree=grid(self.main,('Código','Produto','Categoria','Tamanho','Gramatura','Acabamento','Custo total','Preço de venda','Média vendida','Estado'),
+                       (95,240,130,82,80,145,110,120,110,75))
         term=self.search.get().casefold()
         for p in self.store.products():
             if category.get()!='Todas' and p['category']!=category.get():continue
-            if term not in (p['code']+' '+p['name']+' '+p['size']+' '+p['grammage']).casefold():continue
+            if term not in (p['code']+' '+p['name']+' '+p['size']+' '+p['grammage']+' '+p['finish']).casefold():continue
             cost,missing=self.store.product_cost(p['id']);suggested,_=self.store.suggested(p)
             status='Revisar' if cost is None else ('Ativo' if p['active'] else 'Inativo')
             sale=p['table_cents'] if p['table_cents'] is not None else suggested
-            self.tree.insert('',tk.END,iid=str(p['id']),values=(p['code'],p['name'],p['category'],p['size'],p['grammage'],
+            self.tree.insert('',tk.END,iid=str(p['id']),values=(p['code'],p['name'],p['category'],p['size'],p['grammage'],p['finish'],
                  money(round(cost)) if cost is not None else 'Revisar',money(sale) if sale is not None else 'Revisar',
                  money(self.store.mean_price(p['id'])),status))
         self.tree.bind('<Double-1>',lambda _:self.edit_product())
@@ -723,9 +724,15 @@ class ERP(PurchaseUI):
 
     def product_notes_dialog(self,parent,initial,on_apply,initial_format="",on_apply_format=None):
         from recipe_format import load_format, read_format, toggle_selection
-        win=self.modal('Receita do Produto',850,650)
-        win.transient(parent)
-        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=22,pady=14)
+        # An ordinary resizable window preserves native minimize/maximize controls.
+        # The shared modal() uses transient(), which hides those controls on Windows.
+        win=tk.Toplevel(parent);win.title('Receita do Produto');win.configure(bg=SURFACE)
+        width=min(900,max(320,win.winfo_screenwidth()-80))
+        height=min(650,max(300,win.winfo_screenheight()-140))
+        win.geometry(f'{width}x{height}+20+20')
+        win.minsize(min(560,width),min(360,height));win.resizable(True,True);win.grab_set()
+        # Reserve actions before any expanding content, including at high DPI.
+        footer=tk.Frame(win,bg=SURFACE);footer.pack(side='top',fill='x',padx=16,pady=10)
         tk.Label(win,text='Anote folhas, medidas de corte, rendimento e etapas de montagem.\n'
                  'Exemplo: 1 folha A4 → cortar 6 peças → colar → embalar.\n'
                  'Após aplicar, clique em Salvar produto para gravar a receita.',
@@ -734,7 +741,7 @@ class ERP(PurchaseUI):
         tk.Label(win,text='Selecione um trecho e clique em Negrito ou Marca-texto. Clique novamente para remover.',
                  bg=SURFACE,fg=MUTED,wraplength=720).pack(anchor='w',padx=22)
         frame=tk.Frame(win,bg=SURFACE);frame.pack(fill='both',expand=True,padx=22,pady=8)
-        editor=tk.Text(frame,wrap='word',undo=True,exportselection=False,font=(BODY,12),bg='white',fg=OLIVE,padx=12,pady=12)
+        editor=tk.Text(frame,width=1,height=6,wrap='word',undo=True,exportselection=False,font=(BODY,12),bg='white',fg=OLIVE,padx=12,pady=12)
         scroll=ttk.Scrollbar(frame,orient='vertical',command=editor.yview)
         scroll.pack(side='right',fill='y');editor.pack(side='left',fill='both',expand=True)
         editor.configure(yscrollcommand=scroll.set);editor.insert('1.0',initial)
@@ -785,11 +792,11 @@ class ERP(PurchaseUI):
         category_field=self.category_picker(body,'products',8,p['category'] if p else 'Sem categoria')
         measurements={}
         for key,label,row,col,help_text in (
-                ('weight_g','PESO (g)',10,0,'Peso do produto cadastrado, em gramas. Ex.: 250,5. Opcional; não altera o custo.'),
-                ('height_cm','ALTURA (cm)',10,1,'Altura do produto, em centímetros. Ex.: 3,5. Opcional.'),
-                ('width_cm','LARGURA (cm)',12,0,'Largura do produto, em centímetros. Ex.: 15. Opcional.'),
-                ('length_cm','COMPRIMENTO (cm)',12,1,'Comprimento do produto, em centímetros. Ex.: 21. Opcional.')):
-            value=fmt_qty(p[key]) if p and p[key] is not None else ''
+                ('weight_g','PESO (kg)',10,0,'Peso do produto em quilogramas. Ex.: 0,250 = 250 g. Opcional; não altera o custo.'),
+                ('height_cm','ALTURA (m)',10,1,'Altura do produto em metros. Ex.: 0,035 = 3,5 cm. Opcional.'),
+                ('width_cm','LARGURA (m)',12,0,'Largura do produto em metros. Ex.: 0,15 = 15 cm. Opcional.'),
+                ('length_cm','COMPRIMENTO (m)',12,1,'Comprimento do produto em metros. Ex.: 0,21 = 21 cm. Opcional.')):
+            value=display_measurement(key,p[key]) if p else ''
             measurements[key]=field(body,label,row,value,col,help_text=help_text)
         finish=field(body,'ACABAMENTO',4,p['finish'] if p else '',0,
                      help_text='Descrição opcional, por exemplo Laminação brilhante, Fosco ou Holográfico. Não altera custos; cadastre os insumos correspondentes na composição.')
@@ -906,7 +913,7 @@ class ERP(PurchaseUI):
                     table_cents=cents(price.get()),recipe=[(ref,qty) for kind,ref,qty,section in entries if kind=='material'],base_yield=1,
                     sections=[section for kind,ref,qty,section in entries if kind=='material'],category=category_field.get(),
                     components=[(ref,qty,section) for kind,ref,qty,section in entries if kind=='product'],
-                    measurements={key:entry.get() for key,entry in measurements.items()},production_notes=notes['text'],finish=finish.get(),production_notes_format=notes['format'])
+                    measurements={key:stored_measurement(key,entry.get()) for key,entry in measurements.items()},production_notes=notes['text'],finish=finish.get(),production_notes_format=notes['format'])
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')

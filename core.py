@@ -7,6 +7,7 @@ import re
 import sqlite3
 import sys
 import unicodedata
+from recipe_format import normalize_format
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -201,6 +202,9 @@ class Store(Purchasing,ProductComposition):
                 self.db.execute('ALTER TABLE orders ADD COLUMN paid_cents INTEGER NOT NULL DEFAULT 0')
             material_columns={r['name'] for r in self.all('PRAGMA table_info(materials)')}
             product_columns={r['name'] for r in self.all('PRAGMA table_info(products)')}
+            for name in ('finish','production_notes_format'):
+                if name not in product_columns:
+                    self.db.execute(f"ALTER TABLE products ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
             if 'production_notes' not in product_columns:
                 self.db.execute("ALTER TABLE products ADD COLUMN production_notes TEXT NOT NULL DEFAULT ''")
             for name in ('weight_g','height_cm','width_cm','length_cm'):
@@ -304,7 +308,7 @@ class Store(Purchasing,ProductComposition):
             sections=[r['section'] for r in self.recipe(product_id)],
             components=[(r['component_id'],r['qty'],r['section']) for r in self.components(product_id)],
             measurements={key:p[key] for key in ('weight_g','height_cm','width_cm','length_cm')},
-            production_notes=p['production_notes'])
+            production_notes=p['production_notes'],finish=p['finish'],production_notes_format=p['production_notes_format'])
 
     def close(self):
         self.db.close()
@@ -466,9 +470,11 @@ class Store(Purchasing,ProductComposition):
         price = int((Decimal(str(cost)) * Decimal(str(product['markup']))).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
         return price, []
 
-    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None, components=None, measurements=None, production_notes=None):
+    def save_product(self, *, id=None, name, size='', grammage='', markup, table_cents, recipe, code=None, base_yield=None, category=None, sections=None, components=None, measurements=None, production_notes=None, finish=None, production_notes_format=None):
         if production_notes is not None and not isinstance(production_notes,str):
             raise ValueError('A receita do produto deve ser um texto.')
+        if finish is not None and not isinstance(finish,str):raise ValueError('Acabamento deve ser um texto.')
+        if production_notes_format is not None:production_notes_format=normalize_format(production_notes_format)
         clean_measurements={}
         labels={'weight_g':'Peso (g)','height_cm':'Altura (cm)','width_cm':'Largura (cm)','length_cm':'Comprimento (cm)'}
         for key,value in (measurements or {}).items():
@@ -510,8 +516,13 @@ class Store(Purchasing,ProductComposition):
             else:
                 id = self.db.execute("INSERT INTO products(code,name,size,grammage,markup,table_cents) VALUES(?,?,?,?,?,?)",
                                      (code,name,size,grammage,markup,table_cents)).lastrowid
+            if finish is not None:self.db.execute('UPDATE products SET finish=? WHERE id=?',(finish.strip(),id))
             if production_notes is not None:
+                previous=self.one('SELECT production_notes FROM products WHERE id=?',(id,))[0]
+                if production_notes!=previous and production_notes_format is None:production_notes_format='{}'
                 self.db.execute('UPDATE products SET production_notes=? WHERE id=?',(production_notes,id))
+            if production_notes_format is not None:
+                self.db.execute('UPDATE products SET production_notes_format=? WHERE id=?',(production_notes_format,id))
             for key,value in clean_measurements.items():
                 self.db.execute(f'UPDATE products SET {key}=? WHERE id=?',(value,id))
             if base_yield is not None:

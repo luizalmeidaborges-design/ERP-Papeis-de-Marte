@@ -37,7 +37,7 @@ class ProductNotesTests(unittest.TestCase):
             harness.fields['NOME DO PRODUTO'].set('Produto')
             harness.fields['CÓDIGO DO PRODUTO'].set('PRO')
             opened=[]
-            def editor(parent,initial,apply):
+            def editor(parent,initial,apply,**kwargs):
                 opened.append(initial);apply('Cortar → Colar\nEmbalar')
             harness.ui.product_notes_dialog=editor
             harness.actions['Receita do Produto'][0]()

@@ -1,3 +1,18 @@
+## Versão 6.1.0 — formatação da receita e acabamento
+
+- Receita do Produto: selecione texto e use **Negrito** (também Ctrl+B) ou
+  **Marca-texto** amarelo. Repetir remove o estilo; é possível combinar ambos.
+  Aplicar ao produto e depois Salvar produto grava texto e formatação.
+  Fechar/Cancelar pede confirmação também se somente a formatação foi alterada.
+- Campo opcional **Acabamento** abaixo de Tamanho e acima de Receita do Produto.
+  Texto descritivo; os custos continuam definidos pelos insumos da composição.
+- **Salvar produto** fica fixo no topo, fora da área de rolagem. O resumo do custo
+  permanece no rodapé.
+- Migração preserva receitas e produtos antigos. Duplicar copia acabamento,
+  receita e formatação. Backups do banco incluem essas informações.
+
+Compilação manual: informe **6.1.0** no workflow. release-version.txt não alterado.
+
 ## Versão 6.0.0 — Receita do Produto
 
 No cadastro ou edição de um produto, o botão **Receita do Produto**, abaixo de

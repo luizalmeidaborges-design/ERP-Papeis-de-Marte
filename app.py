@@ -721,7 +721,8 @@ class ERP(PurchaseUI):
         id=self.selection(self.tree)
         if id:self.store.toggle_product(id);self.render()
 
-    def product_notes_dialog(self,parent,initial,on_apply):
+    def product_notes_dialog(self,parent,initial,on_apply,initial_format="",on_apply_format=None):
+        from recipe_format import load_format, read_format, toggle_selection
         win=self.modal('Receita do Produto',850,650)
         win.transient(parent)
         footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=22,pady=14)
@@ -729,19 +730,34 @@ class ERP(PurchaseUI):
                  'Exemplo: 1 folha A4 → cortar 6 peças → colar → embalar.\n'
                  'Após aplicar, clique em Salvar produto para gravar a receita.',
                  bg=SURFACE,fg=MUTED,justify='left',wraplength=720).pack(anchor='w',padx=22,pady=10)
+        tools=tk.Frame(win,bg=SURFACE);tools.pack(fill='x',padx=22,pady=4)
+        tk.Label(win,text='Selecione um trecho e clique em Negrito ou Marca-texto. Clique novamente para remover.',
+                 bg=SURFACE,fg=MUTED,wraplength=720).pack(anchor='w',padx=22)
         frame=tk.Frame(win,bg=SURFACE);frame.pack(fill='both',expand=True,padx=22,pady=8)
-        editor=tk.Text(frame,wrap='word',undo=True,font=(BODY,12),bg='white',fg=OLIVE,padx=12,pady=12)
+        editor=tk.Text(frame,wrap='word',undo=True,exportselection=False,font=(BODY,12),bg='white',fg=OLIVE,padx=12,pady=12)
         scroll=ttk.Scrollbar(frame,orient='vertical',command=editor.yview)
         scroll.pack(side='right',fill='y');editor.pack(side='left',fill='both',expand=True)
         editor.configure(yscrollcommand=scroll.set);editor.insert('1.0',initial)
+        editor.tag_configure('bold',font=(BODY,12,'bold'))
+        editor.tag_configure('highlight',background='#FFF09A',foreground='#3A2417')
+        load_format(editor,initial_format)
+        original_format=read_format(editor)
+        def style(tag):
+            if not toggle_selection(editor,tag):
+                messagebox.showinfo('Selecione um trecho','Selecione o texto que deseja formatar.',parent=win)
+        button(tools,'Negrito',lambda:style('bold'),False).pack(side='left',padx=(0,8))
+        button(tools,'Marca-texto',lambda:style('highlight'),False).pack(side='left')
+        editor.bind('<Control-b>',lambda event:(style('bold'),'break')[1])
         def close():
             win.destroy();parent.grab_set()
         def cancel():
-            if editor.get('1.0','end-1c')!=initial and not messagebox.askyesno(
+            if (editor.get('1.0','end-1c')!=initial or read_format(editor)!=original_format) and not messagebox.askyesno(
                     'Descartar alterações?','Descartar as alterações feitas nesta receita?',parent=win,default='no'):return
             close()
         def apply():
-            on_apply(editor.get('1.0','end-1c'));close()
+            on_apply(editor.get('1.0','end-1c'))
+            if on_apply_format is not None:on_apply_format(read_format(editor))
+            close()
         button(footer,'Cancelar',cancel,False).pack(side='left')
         button(footer,'Aplicar ao produto',apply,True).pack(side='right')
         win.protocol('WM_DELETE_WINDOW',cancel);editor.focus_set()
@@ -751,7 +767,7 @@ class ERP(PurchaseUI):
         footer=tk.Frame(win,bg=SURFACE);footer.pack(side='bottom',fill='x',padx=24,pady=12)
         total_label=tk.Label(footer,text='',bg=SURFACE,fg=RED,font=(BODY,11,'bold'),wraplength=820,justify='left')
         total_label.pack(anchor='w',pady=(0,8))
-        buttons=tk.Frame(footer,bg=SURFACE);buttons.pack(fill='x')
+        buttons=tk.Frame(win,bg=SURFACE);buttons.pack(side='top',fill='x',padx=24,pady=(0,10))
         area=ScrollArea(win,background=SURFACE,min_width=920,min_height=660)
         area.pack(fill='both',expand=True);content=area.content
         body=tk.Frame(content,bg=SURFACE);body.pack(fill='x',padx=16)
@@ -766,22 +782,25 @@ class ERP(PurchaseUI):
         gram=field(body,'GRAMATURA',2,p['grammage'] if p else '',1,variable=gram_var,
                    help_text='Gramatura do papel em g/m², por exemplo 150. Opcional; não altera o custo sozinha.')
         self.bind_code_suggestion(code,(name_var,size_var,gram_var),'products',bool(p))
-        category_field=self.category_picker(body,'products',6,p['category'] if p else 'Sem categoria')
+        category_field=self.category_picker(body,'products',8,p['category'] if p else 'Sem categoria')
         measurements={}
         for key,label,row,col,help_text in (
-                ('weight_g','PESO (g)',8,0,'Peso do produto cadastrado, em gramas. Ex.: 250,5. Opcional; não altera o custo.'),
-                ('height_cm','ALTURA (cm)',8,1,'Altura do produto, em centímetros. Ex.: 3,5. Opcional.'),
-                ('width_cm','LARGURA (cm)',10,0,'Largura do produto, em centímetros. Ex.: 15. Opcional.'),
-                ('length_cm','COMPRIMENTO (cm)',10,1,'Comprimento do produto, em centímetros. Ex.: 21. Opcional.')):
+                ('weight_g','PESO (g)',10,0,'Peso do produto cadastrado, em gramas. Ex.: 250,5. Opcional; não altera o custo.'),
+                ('height_cm','ALTURA (cm)',10,1,'Altura do produto, em centímetros. Ex.: 3,5. Opcional.'),
+                ('width_cm','LARGURA (cm)',12,0,'Largura do produto, em centímetros. Ex.: 15. Opcional.'),
+                ('length_cm','COMPRIMENTO (cm)',12,1,'Comprimento do produto, em centímetros. Ex.: 21. Opcional.')):
             value=fmt_qty(p[key]) if p and p[key] is not None else ''
             measurements[key]=field(body,label,row,value,col,help_text=help_text)
-        notes={'text':p['production_notes'] if p else ''}
+        finish=field(body,'ACABAMENTO',4,p['finish'] if p else '',0,
+                     help_text='Descrição opcional, por exemplo Laminação brilhante, Fosco ou Holográfico. Não altera custos; cadastre os insumos correspondentes na composição.')
+        notes={'text':p['production_notes'] if p else '', 'format':p['production_notes_format'] if p else ''}
         def apply_notes(text):notes['text']=text
+        def apply_format(value):notes['format']=value
         button(body,'Receita do Produto',
-               lambda:self.product_notes_dialog(win,notes['text'],apply_notes),False).grid(row=4,column=0,sticky='w',padx=10,pady=4)
+               lambda:self.product_notes_dialog(win,notes['text'],apply_notes,initial_format=notes['format'],on_apply_format=apply_format),False).grid(row=6,column=0,sticky='w',padx=10,pady=4)
         factor=self.store.cost_multiplier()
         tk.Label(body,text=f'Multiplicador geral: {factor:g} • ajuste na engrenagem ⚙',bg=SURFACE,fg=MUTED,
-                 wraplength=360,justify='left').grid(row=5,column=0,sticky='w',padx=10)
+                 wraplength=360,justify='left').grid(row=7,column=0,sticky='w',padx=10)
         price_var=tk.StringVar()
         price=field(body,'PREÇO SUGERIDO (R$) • EDITÁVEL',4,'',1,variable=price_var,
                     help_text='Preenchido com custo × multiplicador geral. Você pode ajustar antes de salvar. Alterar insumos recalcula este campo. O valor salvo será usado nos novos pedidos.')
@@ -887,7 +906,7 @@ class ERP(PurchaseUI):
                     table_cents=cents(price.get()),recipe=[(ref,qty) for kind,ref,qty,section in entries if kind=='material'],base_yield=1,
                     sections=[section for kind,ref,qty,section in entries if kind=='material'],category=category_field.get(),
                     components=[(ref,qty,section) for kind,ref,qty,section in entries if kind=='product'],
-                    measurements={key:entry.get() for key,entry in measurements.items()},production_notes=notes['text'])
+                    measurements={key:entry.get() for key,entry in measurements.items()},production_notes=notes['text'],finish=finish.get(),production_notes_format=notes['format'])
                 win.destroy();self.render()
             except (ValueError,sqlite3.IntegrityError) as exc:self.fail(exc,win)
         button(buttons,'Salvar produto',save).pack(side='right')
